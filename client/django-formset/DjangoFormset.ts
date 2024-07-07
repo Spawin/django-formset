@@ -234,14 +234,35 @@ class FieldGroup {
 
 	private assertUniqueName() : string {
 		let name = '__undefined__';
+		const seen = new Set();
+		const allowedDuplicateTypes = new Set(['checkbox', 'radio']);
+		const duplicateTypeNames = new Map<string, string[]>();
+
 		for (const element of this.fieldElements) {
 			if (name === '__undefined__') {
 				name = element.name;
+			}
+
+			if (allowedDuplicateTypes.has(element.type)) {
+				if (!duplicateTypeNames.has(element.name)) {
+					duplicateTypeNames.set(element.name, []);
+				}
+				duplicateTypeNames.get(element.name)!.push(element.type);
 			} else {
-				if (name !== element.name)
-					throw new Error(`Duplicate name '${name}' on multiple input fields on '${element.name}'`);
+				if (seen.has(element.name)) {
+					throw new Error(`Duplicate name '${element.name}' on multiple input fields.`);
+				}
+				seen.add(element.name);
 			}
 		}
+
+		// Checking that all 'checkbox' and 'radio' elements with the same name are consistent
+		for (const [name, types] of duplicateTypeNames.entries()) {
+			if (new Set(types).size !== 1) {
+				throw new Error(`Inconsistent name '${name}' for elements of type 'checkbox' or 'radio'. All names must be the same.`);
+			}
+		}
+
 		return name;
 	}
 
