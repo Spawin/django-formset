@@ -48,6 +48,7 @@ from testapp.forms.gallerycollection import GalleryCollection
 from testapp.forms.issue import EditIssueCollection
 from testapp.forms.moment import MomentBoxForm, MomentCalendarForm, MomentInputForm, MomentPickerForm
 from testapp.forms.moon import MoonForm, MoonCalendarRenderer
+from testapp.forms.multivalue import MultiValueForm
 from testapp.forms.opinion import OpinionForm
 from testapp.forms.person import (
     ButtonActionsForm, sample_person_data, ModelPersonForm, PersonForm, PersonFormBootstrapRenderer,
@@ -657,4 +658,7 @@ urlpatterns = [
     ), name='button-actions'),
     path('gallerycollection', GalleryCollectionView.as_view(
     ), name='gallerycollection'),
+    path('multi-value', DemoFormView.as_view(
+        form_class=MultiValueForm
+    ), name='multi-value'),
 ]

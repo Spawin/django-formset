@@ -182,6 +182,9 @@ class FieldGroup {
 				} else if (element.type === 'radio') {
 					if ((element as HTMLInputElement).checked)
 						return element.value;
+				} else {
+					// For MultiWidget, we will have multiple elements
+					value.push({name: element.name, value: element.value});
 				}
 			}
 			return value;
@@ -1289,7 +1292,17 @@ class DjangoForm {
 	aggregateValues(): Map<string, FieldValue> {
 		const data = new Map<string, FieldValue>();
 		for (const fieldGroup of this.fieldGroups) {
-			data.set(fieldGroup.name, fieldGroup.aggregateValue());
+			const value = fieldGroup.aggregateValue();
+			// For MultiWidget fields, the value is an array of Object {} with attributes 'name' and 'value'.
+			if (Array.isArray(value) && value.length > 0 && value[0].hasOwnProperty('name') && value[0].hasOwnProperty('value')) {
+				for (const o of value) {
+					if(typeof o === 'object' && 'name' in o && 'value' in o) {
+						data.set(o.name as string, o.value as FieldValue);
+					}
+				}
+			} else {
+				data.set(fieldGroup.name, value);
+			}
 		}
 		// hidden fields are not handled by a <div role="group">
 		for (const element of this.hiddenInputFields.filter(e => e.type === 'hidden')) {
