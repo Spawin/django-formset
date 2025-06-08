@@ -194,6 +194,9 @@ class FieldGroup {
 				} else if (element.type === 'radio') {
 					if ((element as HTMLInputElement).checked)
 						return element.value;
+				} else {
+					// For MultiWidget, we will have multiple elements
+					value.push({name: element.name, value: element.value});
 				}
 			}
 			return value;
@@ -246,14 +249,35 @@ class FieldGroup {
 
 	private assertUniqueName() : string {
 		let name = '__undefined__';
+		const seen = new Set();
+		const allowedDuplicateTypes = new Set(['checkbox', 'radio']);
+		const duplicateTypeNames = new Map<string, string[]>();
+
 		for (const element of this.fieldElements) {
 			if (name === '__undefined__') {
 				name = element.name;
+			}
+
+			if (allowedDuplicateTypes.has(element.type)) {
+				if (!duplicateTypeNames.has(element.name)) {
+					duplicateTypeNames.set(element.name, []);
+				}
+				duplicateTypeNames.get(element.name)!.push(element.type);
 			} else {
-				if (name !== element.name)
-					throw new Error(`Duplicate name '${name}' on multiple input fields on '${element.name}'`);
+				if (seen.has(element.name)) {
+					throw new Error(`Duplicate name '${element.name}' on multiple input fields.`);
+				}
+				seen.add(element.name);
 			}
 		}
+
+		// Checking that all 'checkbox' and 'radio' elements with the same name are consistent
+		for (const [name, types] of duplicateTypeNames.entries()) {
+			if (new Set(types).size !== 1) {
+				throw new Error(`Inconsistent name '${name}' for elements of type 'checkbox' or 'radio'. All names must be the same.`);
+			}
+		}
+
 		return name;
 	}
 
@@ -1214,7 +1238,17 @@ class DjangoForm {
 	aggregateValues(): Map<string, FieldValue> {
 		const data = new Map<string, FieldValue>();
 		for (const fieldGroup of this.fieldGroups) {
-			data.set(fieldGroup.name, fieldGroup.aggregateValue());
+			const value = fieldGroup.aggregateValue();
+			// For MultiWidget fields, the value is an array of Object {} with attributes 'name' and 'value'.
+			if (Array.isArray(value) && value.length > 0 && value[0].hasOwnProperty('name') && value[0].hasOwnProperty('value')) {
+				for (const o of value) {
+					if(typeof o === 'object' && 'name' in o && 'value' in o) {
+						data.set(o.name as string, o.value as FieldValue);
+					}
+				}
+			} else {
+				data.set(fieldGroup.name, value);
+			}
 		}
 		// hidden fields are not handled by a <div role="group">
 		for (const element of this.hiddenInputFields.filter(e => e.type === 'hidden')) {
