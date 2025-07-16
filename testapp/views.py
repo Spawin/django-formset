@@ -56,6 +56,7 @@ from testapp.forms.galleryform import GalleryImageForm
 from testapp.forms.issue import EditIssueCollection, EditIssueManyCollection
 from testapp.forms.moment import MomentBoxForm, MomentCalendarForm, MomentInputForm, MomentPickerForm
 from testapp.forms.moon import MoonForm, MoonCalendarRenderer
+from testapp.forms.multivalue import MultiValueForm
 from testapp.forms.opinion import OpinionForm
 from testapp.forms.person import (
     sample_person_data, BootstrapRenderedPersonForm, ModelPersonForm, PersonForm,
@@ -745,6 +746,9 @@ urlpatterns = [
         template_name='testapp/button-actions.html',
         extra_context={'click_actions': 'clearErrors -> disable -> spinner -> submit -> okay(1500) -> proceed !~ enable -> bummer(9999)'},
     ), name='button-actions'),
+    path('multi-value', DemoFormView.as_view(
+        form_class=MultiValueForm
+    ), name='multi-value'),
     path('gallerycollection', GalleryCollectionView.as_view(), name='gallerycollection'),
     path('galleryform', DemoModelFormView.as_view(
         form_class=GalleryImageForm,
