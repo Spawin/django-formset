@@ -89,7 +89,7 @@ our form. When rendered, the above form will roughly turn into HTML such as:
 
 	<django-formset endpoint="/path/to/form-view" csrf-token="MGxnpC…OF57pW">
 	  <form id="id_personform"></form>
-	  <div class="rounded-xl dj-form">
+	  <div role="form" class="rounded-xl">
 	    <div class="dj-form-errors"><ul class="dj-errorlist"></ul></div>
 	    <div role="group" class="mb-5 dj-required">
 	      <label class="formset-label">First name:</label>
@@ -105,10 +105,11 @@ our form. When rendered, the above form will roughly turn into HTML such as:
 	</django-formset>
 
 Compared to the way the native Django form renderer works, we see a few differences here: The most
-obvious one is that input fields are not wrapped into their ``<form>``-element. Instead they refer
-to the form they belong to by ID using the attribute ``form="id_personform"``. This is so
-that forms can logically be nested into each other. Remember that it is invalid HTML to nest one
-``<form>``-element into another one, but using this trick we can mimic that behavior.
+obvious one is that input fields are wrapped into a ``<div role="form">``-element rather than into a
+``<form>``, as we usually do. Instead they refer to the form they belong to by ID using the
+attribute ``form="id_personform"``. This is so that forms can logically be nested into each other.
+Remember that it is invalid HTML to nest one ``<form>``-element into another one, but using this
+trick we can mimic that behavior.
 
 Also note that each input field is wrapped into a ``<div role="group">``-element. Even though this
 tag may look like another web component, it is just a non-visual HTML element. Its purpose is to
@@ -148,14 +149,14 @@ rendered by using the template expansion, ie.
 
 	{{ form }}
 
-using this, our form class has to additionally inherit from :class:`formset.utils.FormMixin`.
+using this, our form class has to additionally inherit from :class:`formset.forms.FormMixin`.
 Such a form could for instance be defined as:
 
 .. code-block:: python
 
 	from django.forms import forms, fields
+	from formset.forms import FormMixin
 	from formset.renderers.tailwind import FormRenderer
-	from formset.utils import FormMixin
 	
 	class PersonForm(FormMixin, forms.Form):
 	    default_renderer = FormRenderer()
@@ -219,7 +220,7 @@ Let's discuss these lines of HTML code step by step:
 
 First we have to "formsetify" our form. This is required in order to change the signature of the
 form class as described in the previous section. If the form instance already inherits from
-:class:`formset.utils.FormMixin`, then this operation can be skipped.
+:class:`formset.forms.FormMixin`, then this operation can be skipped.
 
 We then iterate over all form fields. Here we must distinguish between hidden and visible input
 fields. While the latter shall be wrapped inside a ``<div role="group">`` each, the former shall

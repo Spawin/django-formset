@@ -3,16 +3,17 @@ import template from 'lodash.template';
 
 export class FileUploadWidget {
 	private readonly fieldGroup: FieldGroup;
-	private readonly inputElement: HTMLInputElement;
 	private readonly dropbox: HTMLElement;
 	private readonly chooseFileButton: HTMLButtonElement;
-	private readonly progressBar: HTMLProgressElement | null = null;
+	private readonly progressBar: HTMLProgressElement|null = null;
 	private readonly dropboxItemTemplate: Function;
 	private readonly emptyDropboxItem: HTMLDivElement;
 	private readonly observer: MutationObserver;
-	private readonly initialData: Array<Object>;
+	private readonly initialData: Object[];
+	private readonly initialRequired: boolean;
 	private readonly maxUploadSize: number;
-	public uploadedFiles: Array<Object>;
+	public readonly inputElement: HTMLInputElement;
+	public uploadedFiles: Object[];
 
 	constructor(fieldGroup: FieldGroup, inputElement: HTMLInputElement) {
 		this.fieldGroup = fieldGroup;
@@ -22,9 +23,9 @@ export class FileUploadWidget {
 		if (!this.dropbox)
 			throw new Error('Element <input type="file"> requires sibling element <figure class="dj-dropbox"></figure>');
 
-		this.chooseFileButton = this.fieldGroup.element.querySelector('button.dj-choose-file') as HTMLButtonElement;
+		this.chooseFileButton = this.fieldGroup.element.querySelector(`button[aria-controls="${inputElement.id}"]`) as HTMLButtonElement;
 		if (!this.chooseFileButton)
-			throw new Error('Element <input type="file"> requires sibling element <button class="dj-choose-file"></button>');
+			throw new Error(`Element ${inputElement} requires sibling element <button aria-controls="${inputElement.id}"></button>`);
 
 		this.progressBar = this.fieldGroup.element.querySelector('progress') as HTMLProgressElement;
 		if (this.progressBar) {
@@ -51,6 +52,7 @@ export class FileUploadWidget {
 		} else {
 			this.uploadedFiles = this.initialData = [];
 		}
+		this.initialRequired = this.inputElement.required;
 		this.dropbox.addEventListener('dragenter', this.swallowEvent);
 		this.dropbox.addEventListener('dragover', this.swallowEvent);
 		this.dropbox.addEventListener('drop', this.fileDrop);
@@ -61,7 +63,7 @@ export class FileUploadWidget {
 			this.fieldGroup.inputted();
 			this.fieldGroup.validate();
 		}).catch(() => {
-			this.fieldGroup.reportFailedUpload();
+			this.fieldGroup.errorPlaceholder.reportCustomError(gettext("File upload failed."));
 		}).finally(() => {
 			this.chooseFileButton.blur();
 			this.fieldGroup.touch();
@@ -101,6 +103,7 @@ export class FileUploadWidget {
 
 	private fileRemove = () => {
 		this.inputElement.value = '';  // used to clear readonly `this.inputElement.files`
+		this.inputElement.required = this.initialRequired;
 		this.uploadedFiles = this.initialData.length > 0 ? [{}] : [];
 		while (this.dropbox.firstChild) {
 			this.dropbox.removeChild(this.dropbox.firstChild);
@@ -184,32 +187,43 @@ export class FileUploadWidget {
 	}
 
 	private renderDropbox() {
-		// @ts-ignore
-		const list = this.uploadedFiles.map(this.dropboxItemTemplate);
-		if (list.length > 0) {
-			this.dropbox.innerHTML = list.join('');
-			this.inputElement.dataset.fileupload = JSON.stringify(this.uploadedFiles[0]);
-		} else {
-			this.dropbox.replaceChildren(this.emptyDropboxItem);
+		try {
+			// @ts-ignore
+			const list = this.uploadedFiles.map(this.dropboxItemTemplate);
+			if (list.length > 0) {
+				this.dropbox.innerHTML = list.join('');
+				this.inputElement.dataset.fileupload = JSON.stringify(this.uploadedFiles[0]);
+			} else {
+				this.dropbox.replaceChildren(this.emptyDropboxItem);
+			}
+		} catch (e) {
+			console.warn(`Error while rendering dropbox template: ${e}`);
 		}
 	}
 
 	private attributesChanged(mutationsList: Array<MutationRecord>) {
 		for (const mutation of mutationsList) {
-			if (mutation.type === 'attributes') {
-				if (mutation.attributeName === 'disabled' && this.chooseFileButton.disabled != this.inputElement.disabled) {
-					this.chooseFileButton.disabled = this.inputElement.disabled;
-				}
-				if (mutation.attributeName === 'data-fileupload') {
-					const fileUpload = this.inputElement.dataset.fileupload;
-					if (fileUpload) {
-						this.dropbox.innerHTML = this.dropboxItemTemplate(JSON.parse(fileUpload));
-						const button = this.dropbox.querySelector('.dj-delete-file');
-						if (button) {
-							button.addEventListener('click', this.fileRemove, {once: true});
-						}
+			if (mutation.type !== 'attributes') {
+				continue;
+			}
+			if (mutation.attributeName === 'disabled' && this.chooseFileButton.disabled != this.inputElement.disabled) {
+				this.chooseFileButton.disabled = this.inputElement.disabled;
+			}
+			if (mutation.attributeName === 'data-fileupload') {
+				const fileUpload = this.inputElement.dataset.fileupload;
+				if (fileUpload) {
+					this.dropbox.innerHTML = this.dropboxItemTemplate(JSON.parse(fileUpload));
+					const button = this.dropbox.querySelector('.dj-delete-file');
+					if (button) {
+						button.addEventListener('click', this.fileRemove, {once: true});
 					}
+					this.inputElement.required = false;
+				} else {
+					this.inputElement.required = this.initialRequired;
 				}
+			}
+			if (mutation.attributeName === 'required' && this.inputElement.dataset.fileupload) {
+				this.inputElement.required = false;
 			}
 		}
 	}

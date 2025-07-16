@@ -5,19 +5,21 @@
 Developing in django-formset
 ============================
 
-**django-formset** is a 3rd party Django library partially written in Python, TypeScript_ and
-`PEGGY.js`_. The last two applications are required for the client part and make up about one third
-of the code base.
+**django-formset** is a 3rd party Django library partially written in Python, TypeScript_ and PEG_.
+The last two applications are required for the client part and make up about one third of the code
+base.
 
 The code can be found on GitHub_. Please use the issue tracker **only** to report bugs. For
-questions and new ideas, please use the discussion board.
+questions and new ideas, please use the `discussion board`_. **Do not ask questions using my
+private email address.**
 
 .. _TypeScript: https://www.typescriptlang.org/
-.. _PEGGY.js: https://peggyjs.org/documentation.html
+.. _PEG: https://peggyjs.org/documentation.html
 .. _GitHub: https://github.com/jrief/django-formset
+.. _discussion board: https://github.com/jrief/django-formset/discussions
 
-When building this library locally, it therefore is strongly recommended that you install the whole
-tool-chain required to build the test application:
+When building this library locally, it is strongly recommended that you install the whole tool-chain
+required to build the test application:
 
 .. code-block:: shell
 
@@ -31,7 +33,7 @@ tool-chain required to build the test application:
 	pip install --no-deps -e .
 	npm install --include=dev
 	npm run tag-attributes
-	npm run function-code
+	npm run no-comments
 	npm run tailwindcss
 	npm run esbuild.modular
 	npm run compilescss
@@ -73,16 +75,16 @@ Building the Parsers
 
 The content of the button attribute ``df-click``, and the input field and fieldset attributes
 ``df-show``, ``df-hide`` and ``df-disable`` are parsed before being evaluated by the code
-implementing the web component. This parser is generated using PEGGY and compiles to a pure
+implementing the web component. This parser is generated using PEG_ and compiles to a pure
 TypeScript module through ``npm run tag-attributes``. The grammar describing this proprietary syntax
 can be found in ``assets/tag-attributes.pegjs``. The final parser is generated using
-``npm run tag-attributes`` and written to ``client/django-formset/tag-attributes.ts``. It then is
-imported by the code implementing the web component ``client/django-formset/DjangoFormset.ts``.
+``npm run tag-attributes`` and written to ``client/build/tag-attributes.ts``. It then is imported by
+the code implementing the web component ``client/django-formset/DjangoFormset.ts``.
 
-Another parse is built to convert Tiptap extensions, so that they can be loaded dynamically. This
-parser is generated using ``npm run function-code`` and written to
-``client/django-formset/function-code.ts``. It then is imported by the code implementing the web
-component ``client/django-formset/RichtextArea.ts``.
+Another parser is built to remove comments from Tiptap extensions, so that they can be loaded
+dynamically. This parser is generated using ``npm run no-comments`` and written to
+``client/build/no-comments``. It then is imported by the code implementing the web component
+``client/django-formset/RichtextArea.ts``.
 
 
 Building the Client

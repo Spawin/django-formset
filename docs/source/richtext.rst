@@ -11,12 +11,12 @@ More text formatting options will be implemented in the future.
 
 The **django-formset** library provides a widget, which can be used as a drop-in replacement for the
 HTML element ``<textarea>``, implemented as a web component. In a Django form's ``CharField``, we
-just have to replace the built-in widget against :class:`formset.richtext.widgets.RichTextarea`.
+just have to replace the built-in widget against :class:`formset.widgets.RichTextarea`.
 
 .. django-view:: blog_form
 
 	from django.forms import fields, forms
-	from formset.richtext.widgets import RichTextarea
+	from formset.widgets.richtext import RichTextarea
 
 	class BlogForm(forms.Form):
 	    text = fields.CharField(widget=RichTextarea)
@@ -45,7 +45,7 @@ the widget class ``RichTextarea`` can be configured using various control elemen
 .. code-block:: python
 
 	from formset.richtext import controls
-	from formset.richtext.widgets RichTextarea
+	from formset.widgets.richtext RichTextarea
 
 	richtext_widget = RichTextarea(control_elements=[
 	    controls.Bold(),
@@ -336,7 +336,7 @@ The form is named ``SimpleLinkDialogForm`` because it only allows to enter a URL
 rich text field might however want to edit hyperlinks with the ``ref`` and ``target`` attributes,
 and might also want to set links on Django models providing the method `get_absolute_url`_, but
 referring to the primary key of the provided object. Since there can't be any one-size-fits-all
-solution, it is the implementor responsibility to provide a custom dialog form for this purpose.
+solution, it is the implementor's responsibility to provide a custom dialog form for this purpose.
 Section :ref:`richtext-extensions` explains in detail how to do this.
 
 .. _get_absolute_url: https://docs.djangoproject.com/en/stable/ref/models/instances/#get-absolute-url
@@ -362,8 +362,14 @@ the upload field. It will be uploaded to the server and only a reference to this
 stored inside the text. The form is named ``SimpleImageDialogForm`` because it only allows to upload
 an image. The users of this rich text field might however want to edit the image size, the alt text,
 the caption, the alignment and other custom fields. Since there can't be any one-size-fits-all
-solution, it is the implementor responsibility to provide a custom dialog form for this purpose.
+solution, it is the implementor's responsibility to provide a custom dialog form for this purpose.
 Therefore this dialog form can be used as a starting point for a custom image uploading dialog form.
+More on this can be found in section :ref:`richtext-extensions`.
+
+.. versionchanged:: 2.0
+	After submission, the uploaded image is copied from the temporary upload folder into its final
+	destination, which can be configured using the attribute ``upload_to`` of the form field
+	:class:`formset.formfields.richtext.RichTextField`.
 
 
 .. rubric:: Placeholder
@@ -395,7 +401,7 @@ still be entered.
 
 If the content of the rich text editor shall be stored as JSON, set ``use_json=True``. This only is
 required when using this widget for a Django form's ``CharField``. When using the model field class
-:class:`formset.richtext.fields.RichTextField`, this is not necessary.
+:class:`formset.modelfields.RichTextField`, this is not necessary.
 
 .. rubric:: placeholder
 
@@ -450,10 +456,10 @@ not require to sanitize the content, because the JSON structure is only converte
 allowed by the implementation.
 
 **django-formset** provides a special model field class
-:class:`formset.richtext.fields.RichTextField`. It shall be used as a replacement to Django's model
-field class ``TextField``. This model field provides the widget ``RichTextarea`` using the default
-settings. Often that might not be the desired configuration, and it may be necessary to re-declare
-that widget, while creating the form from the model.
+:class:`formset.modelfields.RichTextField`. It shall be used as a replacement to Django's
+model field class ``TextField``. This model field provides the widget ``RichTextarea`` using the
+default settings. Often that might not be the desired configuration, and it may be necessary to
+re-declare that widget, while creating the form from the model.
 
 In this example we use a model with one field for storing the rich text entered by the user:
 
@@ -461,7 +467,7 @@ In this example we use a model with one field for storing the rich text entered 
 	:caption: models.py
 
 	from django.db.models import Model
-	from formset.richtext.fields import RichTextField
+	from formset.modelfields import RichTextField
 	
 	class BlogModel(Model):
 	    body = RichTextField()

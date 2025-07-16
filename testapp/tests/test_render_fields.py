@@ -1,23 +1,20 @@
 import pytest
+import types
 
 from bs4 import BeautifulSoup
 
 from django.forms import widgets
-from django.test import RequestFactory
 
+from formset.forms import FormMixin, DeclarativeFieldsetMetaclass
 from formset.renderers.default import FormRenderer as DefaultFormRenderer
 from formset.renderers.bootstrap import FormRenderer as BootstrapFormRenderer
 from formset.renderers.bulma import FormRenderer as BulmaFormRenderer
 from formset.renderers.foundation import FormRenderer as FoundationFormRenderer
 from formset.renderers.tailwind import FormRenderer as TailwindFormRenderer
 from formset.renderers.uikit import FormRenderer as UIKitFormRenderer
-from formset.utils import FormMixin
 from formset.views import FormView
 
 from testapp.forms.complete import CompleteForm, sample_complete_data
-
-
-http_request = RequestFactory().get('/')
 
 
 @pytest.fixture(scope='session', params=[None, 'bootstrap', 'bulma', 'foundation', 'tailwind', 'uikit'])
@@ -45,7 +42,12 @@ def native_view(framework, initial):
     DefaultFormRenderer, BootstrapFormRenderer, BulmaFormRenderer, FoundationFormRenderer,
     TailwindFormRenderer, UIKitFormRenderer])
 def extended_view(request, initial):
-    form_class = type(CompleteForm.__name__, (FormMixin, CompleteForm), {'default_renderer': request.param})
+    form_class = types.new_class(
+        CompleteForm.__name__,
+        bases=(FormMixin, CompleteForm),
+        kwds={'metaclass': DeclarativeFieldsetMetaclass},
+        exec_body=lambda ns: ns.update(default_renderer=request.param),
+    )
     return FormView.as_view(
         template_name='testapp/extended-form.html',
         form_class=form_class,
@@ -112,7 +114,7 @@ def check_field(framework, form, field_name, soup, initial):
         formset = field_elem.find_parent('django-formset')
         assert formset is not None
         assert len(formset.attrs.get('endpoint', '')) > 0
-        form_elem = formset.find('div', class_='dj-form')
+        form_elem = formset.find('div', role='form')
         errors_elem = form_elem.find('div', class_='dj-form-errors')
         assert errors_elem is not None
         errorlist_elem = errors_elem.find('ul', class_='dj-errorlist')
@@ -227,9 +229,9 @@ def check_field(framework, form, field_name, soup, initial):
                 assert 'formset-radio-select' in input_elem.attrs['class']
 
 
-@pytest.fixture(scope='session')
-def native_soup(native_view):
-    response = native_view(http_request)
+@pytest.fixture
+def native_soup(native_view, rf):
+    response = native_view(rf.get('/'))
     response.render()
     soup = BeautifulSoup(response.content, 'html.parser')
     view_initkwargs = native_view.view_initkwargs
@@ -239,9 +241,9 @@ def native_soup(native_view):
     return framework, form_class, soup, initial
 
 
-@pytest.fixture(scope='session')
-def extended_soup(extended_view):
-    response = extended_view(http_request)
+@pytest.fixture
+def extended_soup(extended_view, rf):
+    response = extended_view(rf.get('/'))
     response.render()
     soup = BeautifulSoup(response.content, 'html.parser')
     view_initkwargs = extended_view.view_initkwargs

@@ -38,12 +38,14 @@ class DateTimeField extends Widget {
 	private hasFocus: HTMLElement|null = null;
 	private cleanup?: Function;
 	private isOpen: boolean = false;
+	private static readonly simpleComponents = ['django-datefield', 'django-datepicker', 'django-daterangefield', 'django-daterangepicker']
+	private static readonly rangeComponents = ['django-daterangefield', 'django-daterangepicker', 'django-datetimerangefield', 'django-datetimerangepicker'];
 
 	constructor(inputElement: HTMLInputElement, calendarElement: HTMLElement | null) {
 		super(inputElement);
 		this.inputElement = inputElement;
-		this.dateOnly = ['django-datefield', 'django-datepicker', 'django-daterangefield', 'django-daterangepicker'].includes(inputElement.getAttribute('is') ?? '');
-		this.withRange = ['django-daterangefield', 'django-daterangepicker', 'django-datetimerangefield', 'django-datetimerangepicker'].includes(inputElement.getAttribute('is') ?? '');
+		this.dateOnly = DateTimeField.simpleComponents.includes(inputElement.getAttribute('is') ?? '');
+		this.withRange = DateTimeField.rangeComponents.includes(inputElement.getAttribute('is') ?? '');
 		this.textBox = this.createTextBox();
 		this.setInitialDate();
 		if (calendarElement) {
@@ -229,9 +231,12 @@ class DateTimeField extends Widget {
 	}
 
 	private closeCalendar() {
-		this.isOpen = false;
-		this.textBox.setAttribute('aria-expanded', 'false');
-		this.cleanup?.();
+		if (this.isOpen) {
+			this.textBox.setAttribute('aria-expanded', 'false');
+			this.cleanup?.();
+			this.inputElement.dispatchEvent(new Event('focusout'));
+			this.isOpen = false;
+		}
 	}
 
 	private updateInputFields() {
@@ -323,9 +328,10 @@ class DateTimeField extends Widget {
 			return;
 		const zIndex = this.textBox.style.zIndex ? parseInt(this.textBox.style.zIndex) : 0;
 		computePosition(this.textBox, this.calendar.element, {
+			placement: 'bottom-start',
 			middleware: [flip(), shift()],
-		}).then(({y}) => Object.assign(
-			this.calendar!.element.style, {top: `${y}px`, zIndex: `${zIndex + 1}`}
+		}).then(({x, y}) => Object.assign(
+			this.calendar!.element.style, {left: `${x}px`, top: `${y}px`, zIndex: `${zIndex + 2}`}
 		));
 	};
 
@@ -501,7 +507,7 @@ class DateTimeField extends Widget {
 		}
 
 		// some styles change when switching light/dark mode, so we need to update them
-		StyleHelpers.pushMediaQueryStyles([[
+		StyleHelpers.pushMediaQueryStyles(
 			this.styleSheet,
 			`${this.baseSelector} + [role="textbox"]`,
 			{
@@ -509,7 +515,8 @@ class DateTimeField extends Widget {
 				'--outline': 'outline',
 			},
 			this.inputElement,
-		], [
+		);
+		StyleHelpers.pushMediaQueryStyles(
 			this.styleSheet,
 			`${this.baseSelector} + [role="textbox"].focus`,
 			{
@@ -517,8 +524,8 @@ class DateTimeField extends Widget {
 				'box-shadow': 'box-shadow',
 				'outline': 'outline',
 			},
-			this.inputElement, '-focus-',
-		]], true);
+			this.inputElement, '⁝focus',
+		);
 		this.inputElement.hidden = true;  // setting type="hidden" prevents dispatching events
 	}
 
@@ -537,8 +544,7 @@ class DateTimeField extends Widget {
 	public checkValidity() : boolean {
 		if (this.withRange && this.currentDate && this.extendedDate) {
 			if (this.currentDate > this.extendedDate) {
-				const message = this.errorMessages.get('customError') ?? "Start date must be before end date";
-				this.inputElement.setCustomValidity(message);
+				this.errorPlaceholder.reportCustomError(gettext("Start date must be before end date"));
 				return false;
 			}
 		}

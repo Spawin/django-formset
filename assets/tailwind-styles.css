@@ -2,6 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
+body {
+	@apply bg-white;
+}
 .formset-label {
 	@apply text-sm text-gray-600;
 }
@@ -17,7 +20,7 @@
 .formset-dual-selector-lookup {
 	@apply formset-text-input border-b-0 rounded-b-none !important;
 }
-.dj-dual-selector ~ .dj-field-errors {
+.df-dual-selector ~ .dj-field-errors {
 	@apply text-end;
 }
 [is="django-dual-selector"] {
@@ -82,4 +85,10 @@
 }
 .dj-richtext-wrapper a {
 	@apply text-blue-500 underline;
+}
+.add-collection {
+	@apply bg-teal-300;
+}
+.remove-collection {
+	@apply bg-fuchsia-300;
 }

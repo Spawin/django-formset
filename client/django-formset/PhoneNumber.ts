@@ -1,4 +1,4 @@
-import {autoPlacement, autoUpdate, computePosition} from '@floating-ui/dom';
+import {autoUpdate, computePosition, flip, shift} from '@floating-ui/dom';
 import {AsYouType, CountryCode, CountryCallingCode, getCountries, getCountryCallingCode} from 'libphonenumber-js/max';
 import {StyleHelpers} from './helpers';
 import {countries} from './countries';
@@ -230,9 +230,10 @@ class PhoneNumberField {
 	private updatePosition = () => {
 		const zIndex = this.textBox.style.zIndex ? parseInt(this.textBox.style.zIndex) : 0;
 		computePosition(this.textBox, this.internationalSelector, {
-			middleware: [autoPlacement()],
-		}).then(() => Object.assign(
-			this.internationalSelector.style, {zIndex: `${zIndex + 1}`}
+			placement: 'bottom-start',
+			middleware: [flip(), shift()],
+		}).then(({x, y}) => Object.assign(
+			this.internationalSelector.style, {left: `${x}px`, top: `${y}px`, zIndex: `${zIndex + 2}`}
 		));
 	};
 
@@ -271,9 +272,12 @@ class PhoneNumberField {
 	}
 
 	private closeInternationalSelector() {
-		this.isOpen = false;
-		this.textBox.setAttribute('aria-expanded', 'false');
-		this.cleanup();
+		if (this.isOpen) {
+			this.textBox.setAttribute('aria-expanded', 'false');
+			this.cleanup();
+			this.inputElement.dispatchEvent(new Event('focusout'));
+			this.isOpen = false;
+		}
 	}
 
 	private setInternationalCode(countryCode: CountryCode, callingCode: CountryCallingCode) {
@@ -373,10 +377,10 @@ class PhoneNumberField {
 						'line-height', 'padding']);
 					break;
 				case `${this.baseSelector} + [role="textbox"][aria-haspopup="dialog"] + [role="dialog"] input[type="search"]:focus`:
-					this.inputElement.classList.add('-focus-');
+					this.inputElement.classList.add('⁝focus');
 					extraStyles = StyleHelpers.extractStyles(this.inputElement, [
 						'border', 'box-shadow', 'outline', 'transition']);
-					this.inputElement.classList.remove('-focus-');
+					this.inputElement.classList.remove('⁝focus');
 					break;
 				case `${this.baseSelector} + [role="textbox"][aria-haspopup="dialog"] + [role="dialog"] ul`:
 					extraStyles = `${selector}{height:${Math.floor(window.innerHeight / 3)}px;}`;
@@ -400,7 +404,7 @@ class PhoneNumberField {
 
 	public initialize() {
 		// some styles change when switching light/dark mode, so we need to update them
-		StyleHelpers.pushMediaQueryStyles([[
+		StyleHelpers.pushMediaQueryStyles(
 			this.styleSheet,
 			`${this.baseSelector} + [role="textbox"]`,
 			{
@@ -408,7 +412,8 @@ class PhoneNumberField {
 				'--outline': 'outline',
 			},
 			this.inputElement,
-		], [
+		);
+		StyleHelpers.pushMediaQueryStyles(
 			this.styleSheet,
 			`${this.baseSelector} + [role="textbox"].focus`,
 			{
@@ -416,8 +421,9 @@ class PhoneNumberField {
 				'box-shadow': 'box-shadow',
 				'outline': 'outline',
 			},
-			this.inputElement, '-focus-',
-		], [
+			this.inputElement, '⁝focus',
+		);
+		StyleHelpers.pushMediaQueryStyles(
 			this.styleSheet,
 			`${this.baseSelector} + [role="textbox"][aria-haspopup="dialog"] + [role="dialog"]`,
 			{
@@ -425,7 +431,8 @@ class PhoneNumberField {
 				'--outline': 'outline',
 			},
 			this.inputElement,
-		], [
+		);
+		StyleHelpers.pushMediaQueryStyles(
 			this.styleSheet,
 			`${this.baseSelector} + [role="textbox"][aria-haspopup="dialog"] + [role="dialog"] input[type="search"]:focus`,
 			{
@@ -434,8 +441,8 @@ class PhoneNumberField {
 				'outline': 'outline',
 				'transition': 'transition',
 			},
-			this.inputElement, '-focus-',
-		]], true);
+			this.inputElement, '⁝focus',
+		);
 
 		this.inputElement.hidden = true;  // setting type="hidden" prevents dispatching events
 		this.installEventHandlers();

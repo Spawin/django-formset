@@ -128,7 +128,10 @@ def test_single_county(page, form, viewname):
     else:
         assert len(states) == 6
         states[4] == "California"
-    input_field = page.locator('django-formset input[type="text"]')
+    input_field = page.locator('django-formset .ts-dropdown .dropdown-input-wrap input[type="text"]')
+    expect(input_field).not_to_be_visible()
+    page.locator('django-formset .shadow-wrapper .ts-wrapper .ts-control').click()
+    expect(input_field).to_be_visible()
     input_field.type("gosh")
     sleep(0.3)  # tom-select's loadThrottle is set to 300ms
     div_optgroup = page.locator('django-formset .ts-dropdown .optgroup')
@@ -148,7 +151,10 @@ def test_few_counties(page, form, viewname):
     states = [optgroups.nth(i).get_attribute('label') for i in range(optgroups.count())]
     assert len(states) == 6
     states[4] == "California"
-    input_field = page.locator('django-formset input[type="text"]')
+    input_field = page.locator('django-formset .ts-dropdown .dropdown-input-wrap input[type="text"]')
+    expect(input_field).not_to_be_visible()
+    page.locator('django-formset .shadow-wrapper .ts-wrapper .ts-control').click()
+    expect(input_field).to_be_visible()
     input_field.type("clall")
     sleep(0.3)  # tom-select's loadThrottle is set to 300ms
     div_optgroup = page.locator('django-formset .ts-dropdown .optgroup .optgroup-header')
@@ -203,7 +209,7 @@ def test_many_counties(page, form, viewname):
     assert selector.evaluate('elem => Array.from(elem.selectedOptions).map(o => o.value)') == [expected]
     select_left.locator('optgroup:nth-child(6) option:first-child').click()
     select_left.locator('optgroup:nth-child(6) option:last-child').click(modifiers=['Shift'])
-    page.locator('django-formset button.dj-move-selected-right ').click()
+    page.locator('django-formset button[aria-label="move selected right"]').click()
     expect(select_right.locator('optgroup')).to_have_count(2)
     expect(select_right.locator('option')).to_have_count(6)
     assert select_right.locator('optgroup:last-child').get_attribute('label') == "Colorado"
@@ -227,7 +233,7 @@ def test_sortable_counties(page, form, viewname):
     expect(select_right.locator('option')).to_have_count(0)
     select_left.locator('optgroup').nth(5).locator('option').first.click()
     select_left.locator('optgroup').nth(5).locator('option').last.click(modifiers=['Shift'])
-    page.locator('django-formset button.dj-move-selected-right ').click()
+    page.locator('django-formset button[aria-label="move selected right"]').click()
     expect(select_right.locator('optgroup')).to_have_count(1)
     expect(select_right.locator('option')).to_have_count(5)
     assert select_right.locator('optgroup').get_attribute('label') == "Colorado"

@@ -1,18 +1,32 @@
+import types
+
 from django import template
 from django.forms import BaseForm
+from django.forms.models import BaseModelForm
 from django.middleware.csrf import get_token
 from django.template.exceptions import TemplateSyntaxError
 from django.utils.module_loading import import_string
 
+from formset.forms import DeclarativeFieldsetMetaclass, FormMixin, FormsetModelFormMetaclass
 from formset.renderers.default import FormRenderer
-from formset.utils import FormMixin, FormsetErrorList
+from formset.utils import FormsetErrorList
 
 
 def _formsetify(form, *args, **kwargs):
     assert isinstance(form, BaseForm), \
         "Must be applied to a Form object inheriting from 'django.forms.BaseForm'."
     if not isinstance(form, FormMixin):
-        form.__class__ = type(form.__class__.__name__, (FormMixin, form.__class__), {})
+        if isinstance(form, BaseModelForm):
+            metaclass = FormsetModelFormMetaclass
+        elif isinstance(form, BaseForm):
+            metaclass = DeclarativeFieldsetMetaclass
+        else:
+            raise TemplateSyntaxError("Must be applied to a Form object inheriting from 'django.forms.BaseForm'.")
+        form.__class__ = types.new_class(
+            name=form.__class__.__name__,
+            bases=(FormMixin, form.__class__),
+            kwds={'metaclass': metaclass}
+        )
 
     renderer_args = [
         ('form_css_classes', kwargs.pop('form_classes', None)),
@@ -49,7 +63,7 @@ def formsetify(context, form, *args, **kwargs):
 def render_form(context, form, *args, **kwargs):
     get_token(context['request'])  # ensures that the CSRF-Cookie is set
     form = _formsetify(form, *args, **kwargs)
-    return form.render(template_name='django/forms/default.html')
+    return form.render(template_name='formset/default/form.html')
 
 
 register = template.Library()

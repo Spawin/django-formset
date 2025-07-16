@@ -129,18 +129,19 @@ def test_initial_value(page, form, viewname):
 @pytest.mark.urls(__name__)
 @pytest.mark.parametrize('viewname', ['selectize1'])
 def test_changing_value(page, form, viewname):
-    input_element = page.locator('django-formset .shadow-wrapper .ts-wrapper .ts-control input[type="text"]')
+    input_element = page.locator('django-formset .shadow-wrapper .ts-wrapper .ts-control input.items-placeholder')
     expect(input_element).to_be_visible()
     expect(input_element).to_have_attribute('placeholder', 'Select')
     assert input_element.evaluate('elem => elem.value') == ''
     field_group_element = page.locator('django-formset [role="group"]')
     expect(field_group_element).to_have_count(1)
-    expect(field_group_element).to_have_class(regex(r'dj-required ds-[0-9a-z]{9,12} dj-untouched dj-pristine'))
+    expect(field_group_element).to_contain_class('dj-required dj-untouched dj-pristine')
+    expect(field_group_element).to_have_class(regex(r'ds-[0-9a-z]{9,13}'))
     expect(field_group_element).not_to_have_class('dj-dirty')
     dropdown_element = page.locator('django-formset .shadow-wrapper .ts-dropdown.single')
     expect(dropdown_element).to_have_count(1)
     expect(dropdown_element).not_to_be_visible()
-    input_element.click()
+    page.locator('django-formset .shadow-wrapper .ts-wrapper .ts-control').click()
     expect(dropdown_element).to_be_visible()
     expect(page.locator('django-formset form:invalid')).to_have_count(1)
     pseudo_option = dropdown_element.locator('div[data-selectable]').nth(8)
@@ -149,7 +150,8 @@ def test_changing_value(page, form, viewname):
     assert pseudo_option.get_attribute('data-value') == str(initial_opinion.id)
     expect(pseudo_option).to_have_text(initial_opinion.label)
     pseudo_option.click()
-    expect(field_group_element).to_have_class(regex(r'dj-required ds-[0-9a-z]{9,12} dj-touched dj-dirty'))
+    expect(field_group_element).to_contain_class('dj-required dj-touched dj-dirty')
+    expect(field_group_element).to_have_class(regex(r'ds-[0-9a-z]{9,13}'))
     expect(dropdown_element).to_be_hidden()
     expect(page.locator('django-formset form:valid')).to_have_count(1)
     selected_item_element = page.locator('django-formset .shadow-wrapper .ts-wrapper .ts-control div.item')
@@ -172,14 +174,15 @@ def test_changing_value(page, form, viewname):
 @pytest.mark.urls(__name__)
 @pytest.mark.parametrize('viewname', ['selectize5'])
 def test_add_multiple(page, form, viewname):
-    input_element = page.locator('django-formset .shadow-wrapper .ts-wrapper .ts-control input[type="text"]')
+    input_element = page.locator('django-formset .shadow-wrapper .ts-wrapper .ts-control input.items-placeholder')
     expect(input_element).to_be_visible()
     expect(input_element).to_have_attribute('placeholder', 'Select any')
     assert input_element.evaluate('elem => elem.value') == ''
     field_group_element = page.locator('django-formset [role="group"]')
     expect(field_group_element).to_have_count(1)
-    expect(field_group_element).to_have_class(regex(r'dj-required ds-[0-9a-z]{9,12} dj-untouched dj-pristine'))
-    expect(field_group_element).not_to_have_class('dj-dirty')
+    expect(field_group_element).to_contain_class('dj-required dj-untouched dj-pristine')
+    expect(field_group_element).to_have_class(regex(r'ds-[0-9a-z]{9,13}'))
+    expect(field_group_element).not_to_contain_class('dj-dirty')
     dropdown_element = page.locator('django-formset .shadow-wrapper .ts-dropdown.multi')
     expect(dropdown_element).to_have_count(1)
     expect(dropdown_element).to_be_hidden()
@@ -191,7 +194,7 @@ def test_add_multiple(page, form, viewname):
         selected_ids.append(pseudo_options.nth(2).get_attribute('data-value'))
         pseudo_options.nth(2).click()
     expect(dropdown_element).to_be_visible()
-    input_element.evaluate('elem => elem.blur()')
+    input_element.click()
     expect(dropdown_element).to_be_hidden()
     selected_item_elements = page.locator('django-formset .shadow-wrapper .ts-wrapper .ts-control div.item')
     expect(selected_item_elements).to_have_count(3)
@@ -220,31 +223,42 @@ def test_change_multiple(page, form, viewname):
     assert set(values) == set(str(i) for i in get_initial_opinions().values_list('id', flat=True))
     field_group_element = formset_element.locator('[role="group"]')
     expect(field_group_element).to_be_visible()
-    expect(field_group_element).to_have_class(regex(r'ds-[0-9a-z]{9,12} dj-untouched dj-pristine'))
+    expect(field_group_element).to_contain_class('dj-untouched dj-pristine')
+    expect(field_group_element).to_have_class(regex(r'ds-[0-9a-z]{9,13}'))
     remove_selected_item_element = formset_element.locator(f'.shadow-wrapper .ts-wrapper .ts-control div[data-value="{values[1]}"].item .remove')
     expect(remove_selected_item_element).to_be_visible()
     remove_selected_item_element.click()
     item_elements = formset_element.locator(f'.shadow-wrapper .ts-wrapper .ts-control div.item')
     expect(item_elements).to_have_count(3)
-    expect(field_group_element).to_have_class(regex(r'ds-[0-9a-z]{9,12} dj-untouched dj-dirty'))
+    expect(field_group_element).to_contain_class('dj-dirty dj-touched')
+    expect(field_group_element).to_have_class(regex(r'ds-[0-9a-z]{9,13}'))
 
 
 @pytest.mark.urls(__name__)
 @pytest.mark.parametrize('viewname', ['selectize1'])
-def test_lookup_value(page, mocker, form, viewname):
-    input_element = page.locator('django-formset .shadow-wrapper .ts-wrapper .ts-control input[type="text"]')
+def test_lookup_value(page, form, viewname):
+    input_element = page.locator('django-formset .shadow-wrapper .ts-wrapper .ts-dropdown .dropdown-input-wrap input[type="text"]')
+    expect(input_element).not_to_be_visible()
+    page.locator('django-formset .shadow-wrapper .ts-wrapper .ts-control').click()
     expect(input_element).to_be_visible()
-    input_element.click()
-    spy = mocker.spy(FormView, 'get')
-    page.keyboard.press('1')
-    page.keyboard.press('5')
-    page.keyboard.press('9')
-    sleep(1)  # because TomSelect delays the lookup
-    spy.assert_called()
-    assert spy.spy_return.status_code == 200
-    content = json.loads(spy.spy_return.content)
-    assert content['count'] == 1
-    assert content['options'][0]['label'] == "Opinion 0159"
+    with page.expect_response(regex(rf'^{page.url}\?.+$')) as response_info:
+        page.keyboard.press('1')
+        sleep(0.05)
+        page.keyboard.press('5')
+        sleep(0.05)
+        page.keyboard.press('9')
+        sleep(0.9)  # because TomSelect delays the lookup
+    assert response_info.value.status == 200
+    opinion = OpinionModel.objects.get(label="Opinion 0159")
+    expected = {
+        'total_count': 999,
+        'search': '159',
+        'count': 1,
+        'incomplete': False,
+        'options': [{'id': opinion.id, 'label': opinion.label}],
+    }
+    assert response_info.value.json() == expected
+
     dropdown_element = page.locator('django-formset .shadow-wrapper .ts-dropdown.single')
     pseudo_option = dropdown_element.locator('div[data-selectable]').nth(0)
     expect(pseudo_option).to_be_visible()
@@ -262,10 +276,9 @@ def test_submit_missing(page, view, form, viewname):
 @pytest.mark.urls(__name__)
 @pytest.mark.parametrize('viewname', ['selectize1'])
 def test_submit_value(page, mocker, view, form, viewname):
-    input_element = page.locator('django-formset .shadow-wrapper .ts-wrapper .ts-control input[type="text"]')
-    expect(input_element).to_be_visible()
-    input_element.click()
     dropdown_element = page.locator('django-formset .shadow-wrapper .ts-wrapper .ts-dropdown.single')
+    expect(dropdown_element).not_to_be_visible()
+    page.locator('django-formset .shadow-wrapper .ts-wrapper .ts-control').click()
     expect(dropdown_element).to_be_visible()
     pseudo_option = dropdown_element.locator('div[data-selectable]').nth(8)
     expect(pseudo_option).to_be_visible()
@@ -282,11 +295,12 @@ def test_submit_value(page, mocker, view, form, viewname):
 @pytest.mark.urls(__name__)
 @pytest.mark.parametrize('viewname', ['selectize1'])
 def test_submit_invalid(page, mocker, view, form, viewname):
-    input_element = page.locator('django-formset .shadow-wrapper .ts-wrapper .ts-control input[type="text"]')
-    dropdown_element = page.locator('django-formset .shadow-wrapper .ts-wrapper  .ts-dropdown.single')
-    expect(input_element).to_be_visible()
+    input_element = page.locator('django-formset .shadow-wrapper .ts-wrapper .ts-dropdown .dropdown-input-wrap input[type="text"]')
+    dropdown_element = page.locator('django-formset .shadow-wrapper .ts-wrapper .ts-dropdown.single')
+    expect(input_element).not_to_be_visible()
     expect(dropdown_element).to_be_hidden()
-    input_element.click()
+    page.locator('django-formset .shadow-wrapper .ts-wrapper .ts-control').click()
+    expect(input_element).to_be_visible()
     expect(dropdown_element).to_be_visible()
     pseudo_option = dropdown_element.locator('div[data-selectable]').nth(8)
     expect(pseudo_option).to_be_visible()
@@ -294,15 +308,18 @@ def test_submit_invalid(page, mocker, view, form, viewname):
     initial_opinion = get_initial_opinion()
     initial_opinion.tenant = 2  # this makes the selected option invalid
     initial_opinion.save(update_fields=['tenant'])
-    spy = mocker.spy(view.view_class, 'post')
-    page.locator('django-formset').evaluate('elem => elem.submit()')
-    sleep(0.2)
-    request = json.loads(spy.call_args.args[1].body)
+    # spy = mocker.spy(view.view_class, 'post')
+    with page.expect_response(page.url) as response_info:
+        page.locator('django-formset').evaluate('elem => elem.submit()')
+    # sleep(0.2)
+    # request = json.loads(spy.call_args.args[1].body)
+    assert response_info.value.status == 422
+    request = response_info.value.request.post_data_json
     assert request['formset_data']['model_choice'] == str(initial_opinion.id)
-    assert spy.spy_return.status_code == 422
-    response = json.loads(spy.spy_return.content)
+    # assert spy.spy_return.status_code == 422
+    # response = json.loads(spy.spy_return.content)
     error_message = models.ModelChoiceField.default_error_messages['invalid_choice']
-    assert response == {'model_choice': [error_message]}
+    assert response_info.value.json() == {'model_choice': [error_message]}
     placeholder = page.locator('[role="group"] ul.dj-errorlist > li.dj-placeholder')
     expect(placeholder).to_have_text(str(error_message))
     initial_opinion.tenant = 1  # reset to initial tenant
@@ -315,10 +332,11 @@ def test_reset_selectize(page, view, form, viewname):
     select_element = page.locator('django-formset select[is="django-selectize"]')
     expect(select_element).to_be_visible()
     initial_value = select_element.evaluate('elem => elem.value')
-    input_element = page.locator('django-formset .shadow-wrapper .ts-wrapper .ts-control input[type="text"]')
+    input_element = page.locator('django-formset .shadow-wrapper .ts-wrapper .ts-dropdown .dropdown-input-wrap input[type="text"]')
+    expect(input_element).not_to_be_visible()
+    page.locator('django-formset .shadow-wrapper .ts-wrapper .ts-control').click()
     expect(input_element).to_be_visible()
     if form.name in ['selection', 'static_selection']:
-        input_element.click()
         dropdown_element = page.locator('django-formset .shadow-wrapper .ts-wrapper .ts-dropdown.single')
         expect(dropdown_element).to_be_visible()
         page.locator('div[data-selectable]').nth(6).click()
@@ -338,12 +356,16 @@ def test_reset_selectize(page, view, form, viewname):
 @pytest.mark.parametrize('viewname', ['selectize0'])
 def test_touch_selectize(page, form, viewname):
     field_group = page.locator('django-formset [role="group"]')
-    expect(field_group).to_have_class(regex(r'ds-[0-9a-z]{9,12} dj-untouched dj-pristine'))
+    expect(field_group).to_contain_class('dj-untouched dj-pristine')
+    expect(field_group).to_have_class(regex(r'ds-[0-9a-z]{9,13}'))
     placeholder = page.locator('django-formset ul.dj-errorlist > li.dj-placeholder')
     expect(placeholder).to_have_text('')
-    input_element = page.locator('django-formset .shadow-wrapper .ts-wrapper .ts-control input[type="text"]')
+    input_element = page.locator('django-formset .shadow-wrapper .ts-wrapper .ts-dropdown .dropdown-input-wrap input[type="text"]')
+    expect(input_element).not_to_be_visible()
+    page.locator('django-formset .shadow-wrapper .ts-wrapper .ts-control').click()
     expect(input_element).to_be_visible()
-    input_element.focus()
-    expect(field_group).to_have_class(regex(r'ds-[0-9a-z]{9,12} dj-pristine dj-touched'))
+    expect(field_group).to_contain_class('dj-pristine dj-touched')
+    expect(field_group).to_have_class(regex(r'ds-[0-9a-z]{9,13}'))
     page.locator('django-formset').evaluate('elem => elem.reset()')
-    expect(field_group).to_have_class(regex(r'ds-[0-9a-z]{9,12} dj-pristine dj-untouched'))
+    expect(field_group).to_contain_class('dj-pristine dj-untouched')
+    expect(field_group).to_have_class(regex(r'ds-[0-9a-z]{9,13}'))

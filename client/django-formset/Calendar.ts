@@ -59,7 +59,7 @@ export class CalendarSheet extends Widget {
 	private readonly rangeSelectCssRule: CSSStyleRule;
 	private readonly rangeSelectorText: string;
 
-	constructor(calendarElement: HTMLElement | null, settings: CalendarSettings) {
+	constructor(calendarElement: HTMLElement|null, settings: CalendarSettings) {
 		super(settings.inputElement);
 		this.settings = settings;
 		if (calendarElement instanceof HTMLElement) {
@@ -847,8 +847,9 @@ export class CalendarSheet extends Widget {
 		inputElement.style.transition = 'none';  // prevent transition while pilfering styles
 		for (let index = 0; index < sheet.cssRules.length; index++) {
 			const cssRule = sheet.cssRules.item(index) as CSSStyleRule;
-			let extraStyles: string;
-			switch (cssRule.selectorText) {
+			const selector = cssRule.selectorText.trim();
+			let extraStyles = '';
+			switch (selector) {
 				case this.baseSelector:
 					extraStyles = StyleHelpers.extractStyles(inputElement, [
 						'font-family', 'font-size', 'font-stretch', 'font-style', 'font-weight',
@@ -858,23 +859,23 @@ export class CalendarSheet extends Widget {
 						'--border-width': 'border-width',
 						'--border-radius': 'border-radius',
 					}));
-					sheet.insertRule(`${cssRule.selectorText}{${extraStyles}}`, ++index);
 					loaded = true;
 					break;
 				case `${this.baseSelector} .controls`:
 					extraStyles = StyleHelpers.extractStyles(inputElement, ['padding']);
-					sheet.insertRule(`${cssRule.selectorText}{${extraStyles}}`, ++index);
 					break;
 				case `${this.baseSelector} .sheet-body .central`:
 					extraStyles = StyleHelpers.extractStyles(inputElement, ['padding']);
-					sheet.insertRule(`${cssRule.selectorText}{${extraStyles}}`, ++index);
 					break;
 				default:
 					break;
 			}
+			if (extraStyles) {
+				sheet.insertRule(`${selector}{${extraStyles}}`, ++index);
+			}
 		}
 		inputElement.style.transition = '';
-		StyleHelpers.pushMediaQueryStyles([[
+		StyleHelpers.pushMediaQueryStyles(
 			sheet,
 			this.baseSelector,
 			{
@@ -882,7 +883,7 @@ export class CalendarSheet extends Widget {
 				'--outline': 'outline',
 			},
 			inputElement,
-		]]);
+		);
 		if (!loaded)
 			throw new Error(`Could not load styles for ${this.baseSelector}`);
 		return sheet;
@@ -894,7 +895,8 @@ export class CalendarSheet extends Widget {
 			for (let k = 0; k < sheet.cssRules.length; ++k) {
 				const cssRule = sheet.cssRules[k];
 				if (cssRule instanceof CSSStyleRule && cssRule.selectorText === `${this.baseSelector} .sheet-body ul:not(*)`) {
-					const selectorText = `#${this.settings.inputElement.id} ~ ${this.baseSelector} .sheet-body ul:not(*)`;
+					const elementId = this.settings.inputElement.id.replaceAll('.', '\\.');
+					const selectorText = `#${elementId} ~ ${this.baseSelector} .sheet-body ul:not(*)`;
 					const index = sheet.insertRule(`${selectorText}{${cssRule.style.cssText}}`, sheet.cssRules.length);
 					return sheet.cssRules[index] as CSSStyleRule;
 				}

@@ -11,13 +11,13 @@ except ImportError:  # Django<5.0
     from django.forms.fields import CallableChoiceIterator
 
 from django.utils.encoding import force_str
-from django.utils.functional import cached_property
 from django.views.generic.base import ContextMixin, TemplateResponseMixin, View
 from django.views.generic.detail import SingleObjectMixin
 from django.views.generic.edit import FormView as GenericFormView
 
 from formset.upload import FileUploadMixin
-from formset.widgets import DualSelector, Selectize
+from formset.utils import CollectionFieldMixin
+from formset.widgets.models import IncompleteSelectMixin
 
 
 class IncompleteSelectResponseMixin:
@@ -38,7 +38,9 @@ class IncompleteSelectResponseMixin:
             field = self.get_field(field_path)
         except (KeyError, ValueError):
             return HttpResponseBadRequest(f"No such field: {field_path}")
-        assert isinstance(field.widget, (Selectize, DualSelector))
+        assert isinstance(field.widget, IncompleteSelectMixin), (
+            f"Field {field_path} must use a widget inheriting from `IncompleteSelectMixin`."
+        )
         widget = field.widget
         try:
             offset = int(request.GET.get('offset'))
@@ -58,24 +60,20 @@ class IncompleteSelectResponseMixin:
 
         queryset = widget.choices.queryset
         data = {'total_count': queryset.count()}
-        incomplete = queryset.count() - offset > widget.max_prefetch_choices
 
         if widget.filter_by and any(k.startswith('filter-') for k in request.GET.keys()):
             filtervalues = {key: request.GET.getlist(f'filter-{key}') for key in widget.filter_by.keys()}
             queryset = queryset.filter(widget.build_filter_query(filtervalues))
-            incomplete = None  # incomplete state unknown
         elif widget.use_filter_set:
             queryset = widget.use_filter_set(request=request, queryset=queryset).qs
-            incomplete = None  # incomplete state unknown
 
-        if pk := request.GET.get('pk'):
-            queryset = queryset.filter(pk=pk)
-            incomplete = None  # incomplete state unknown
+        if pks := request.GET.getlist('pk'):
+            queryset = queryset.filter(pk__in=pks)
         elif search := request.GET.get('search'):
             data['search'] = search
             queryset = queryset.filter(widget.build_search_query(search))
-            incomplete = None  # incomplete state unknown
 
+        incomplete = queryset.count() - offset > widget.max_prefetch_choices
         limited_qs = queryset[offset:offset + widget.max_prefetch_choices]
         to_field_name = field.to_field_name if field.to_field_name else 'pk'
         if widget.group_field_name:
@@ -98,10 +96,12 @@ class IncompleteSelectResponseMixin:
 
 
 class FormsetResponseMixin:
-    @cached_property
+    @property
     def _request_body(self):
         if self.request.content_type == 'application/json':
-            return json.loads(self.request.body)
+            if not isinstance(getattr(self.request, '_parsed_body', None), dict):
+                self.request._parsed_body = json.loads(self.request.body)
+            return self.request._parsed_body
 
     def get_extra_data(self):
         """
@@ -144,8 +144,12 @@ class FormViewMixin(FormsetResponseMixin):
         return kwargs
 
     def get_field(self, field_path):
-        field_name = field_path.split('.')[-1]
-        return self.form_class.base_fields[field_name]
+        parts = field_path.split('.')
+        if parts[0] == '__default__':
+            return self.form_class.base_fields[parts[1]]
+        if isinstance(self.form_class.base_fields[parts[0]], CollectionFieldMixin):
+            return self.form_class.base_fields[parts[0]].collection.get_field('.'.join(parts[1:]))
+        raise KeyError(f"Field {field_path} not found in formset {self.form_class.__name__}.")
 
 
 class FormView(IncompleteSelectResponseMixin, FileUploadMixin, FormViewMixin, GenericFormView):

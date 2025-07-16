@@ -33,7 +33,7 @@ import {TextColor} from '../tiptap-extensions/color';
 import {ClassBasedMark, ClassBasedNode} from '../tiptap-extensions/classbased';
 import {StyleHelpers} from './helpers';
 import {FormDialogBase} from './FormDialog';
-import {parse} from '../build/function-code';
+import {parse} from '../build/no-comments';
 import styles from './RichtextArea.scss';
 
 
@@ -860,7 +860,7 @@ class RichtextFormDialog extends FormDialogBase {
 		try {
 			const plugin = scriptElement.getAttribute('tiptap-plugin');
 			const response = await fetch(scriptElement.src);
-			const extensionScript = parse(await response.text(), {startRule: 'FunctionCode'});
+			const extensionScript = parse(await response.text(), {startRule: 'JavaScript'});
 			const parsedScript = new Function('mergeAttributes', 'markPasteRule', `return ${extensionScript}`);
 			const executedScript = parsedScript(mergeAttributes, markPasteRule);
 			executedScript.addProseMirrorPlugins = this.addProseMirrorPlugins();
@@ -906,8 +906,8 @@ class RichtextFormDialog extends FormDialogBase {
 			if (typeof mapping === 'string' && mapping.startsWith('{') && mapping.endsWith('}')) {
 				const mapFunction = new Function('attributes', `return ${mapping}`);
 				Object.entries(mapFunction(attributes)).forEach(([key0, value]) => {
-					if (value) {
-						if (typeof (inputElement as any)[key0] === 'object') {
+					if (value !== undefined) {
+						if ((inputElement as any)[key0] instanceof Object && value instanceof Object) {
 							Object.entries(value).forEach(([key1, value]) => {
 								(inputElement as any)[key0][key1] = value;
 							});
@@ -1089,7 +1089,7 @@ class RichtextArea {
 		this.registerControlActions(extensions);
 		await this.registerFormDialogs(extensions);
 		this.registerPlaceholder(extensions);
-		this.registerCharaterCount(extensions);
+		this.registerCharacterCount(extensions);
 		const editor = new Editor({
 			element: wrapperElement,
 			extensions: extensions,
@@ -1148,7 +1148,7 @@ class RichtextArea {
 		extensions.push(Placeholder.configure({placeholder: placeholderText}));
 	}
 
-	private registerCharaterCount(extensions: Array<Extension|Mark|Node>) {
+	private registerCharacterCount(extensions: Array<Extension|Mark|Node>) {
 		const limit = parseInt(this.textAreaElement.getAttribute('maxlength') ?? '');
 		if (limit > 0) {
 			extensions.push(CharacterCount.configure({limit}));
@@ -1175,12 +1175,14 @@ class RichtextArea {
 	}
 
 	private validate() {
-		if (this.textAreaElement.required && this.editor.getText().length === 0) {
-			this.wrapperElement.classList.remove('valid');
-			this.wrapperElement.classList.add('invalid');
-		} else {
+		// an empty editor would set innerHTML to `<p></p>` which fails validation for required fields
+		this.textAreaElement.innerHTML = this.editor.getText().length === 0 ? '' : this.editor.getHTML();
+		if (this.textAreaElement.checkValidity()) {
 			this.wrapperElement.classList.add('valid');
 			this.wrapperElement.classList.remove('invalid');
+		} else {
+			this.wrapperElement.classList.remove('valid');
+			this.wrapperElement.classList.add('invalid');
 		}
 	}
 
@@ -1279,10 +1281,10 @@ class RichtextArea {
 					break;
 				case `.dj-submitted ${this.baseSelector}.focused.invalid`:
 					this.textAreaElement.style.transition = 'none';
-					this.textAreaElement.classList.add('-focus-', '-invalid-', 'is-invalid');  // is-invalid is a Bootstrap hack
+					this.textAreaElement.classList.add('⁝focus', '⁝invalid', 'is-invalid');  // is-invalid is a Bootstrap hack
 					extraStyles = StyleHelpers.extractStyles(this.textAreaElement, [
 						'border', 'box-shadow', 'outline']);
-					this.textAreaElement.classList.remove('-focus-', '-invalid-', 'is-invalid');
+					this.textAreaElement.classList.remove('⁝focus', '⁝invalid', 'is-invalid');
 					sheet.insertRule(`${cssRule.selectorText}{${extraStyles}}`, ++index);
 					this.textAreaElement.style.transition = '';
 					break;
@@ -1315,12 +1317,12 @@ class RichtextArea {
 		}
 
 		// border color may change during runtime
-		StyleHelpers.pushMediaQueryStyles([[
+		StyleHelpers.pushMediaQueryStyles(
 			sheet,
 			this.baseSelector,
 			{'--border-color': 'border-color'},
 			this.textAreaElement,
-		]]);
+		);
 
 		if (!loaded)
 			throw new Error(`Could not load styles for ${this.baseSelector}`);

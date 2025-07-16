@@ -1,6 +1,6 @@
 from django.db import models
 
-from formset.richtext.fields import RichTextField
+from formset.modelfields import RichTextField
 
 
 class Gallery(models.Model):
@@ -13,11 +13,12 @@ class Gallery(models.Model):
         max_length=40,
         db_index=True,
     )
+    extra_data = models.JSONField(default=dict)
 
     class Meta:
         verbose_name = "Gallery"
         verbose_name_plural = "Galleries"
-        unique_together = ['name', 'created_by']
+        constraints = [models.UniqueConstraint(fields=['name', 'created_by'], name='unique_name')]
 
     def __str__(self):
         return self.name

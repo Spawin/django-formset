@@ -26,10 +26,12 @@ Django's counterparts.
 	buttons
 	activators
 	withholding-feedback
-	collections
-	fieldsets
+	form-collections
+	fields-mapping
 	model-forms
 	model-collections
+	fieldsets
+	collection-fields
 	form-renderer
 	conditionals
 	uploading
@@ -45,6 +47,7 @@ Django's counterparts.
 	date-time-range
 	country-selectize
 	phone-number-field
+	admin-integration
 	development
 	contributing
 	faq

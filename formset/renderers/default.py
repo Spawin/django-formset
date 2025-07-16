@@ -19,7 +19,6 @@ class FormRenderer(DjangoTemplates):
     _template_mapping = {
         'django/forms/errors/list/default.html': 'formset/default/field_errors.html',
         'django/forms/div.html': 'formset/default/form.html',
-        'django/forms/default.html': 'formset/default/form.html',
         'django/forms/widgets/file.html': 'formset/default/widgets/file.html',
         'django/forms/widgets/radio.html': 'formset/default/widgets/multiple_input.html',
         'django/forms/widgets/checkbox_select.html': 'formset/default/widgets/multiple_input.html',
@@ -38,6 +37,9 @@ class FormRenderer(DjangoTemplates):
             self.max_options_per_line = max_options_per_line
         if exempt_feedback is not None:
             self.exempt_feedback = exempt_feedback
+        # temporary storage to keep track of which fields have already been rendered by a Fieldset.
+        # This is necessary to prevent double rendering of fields inside the same form.
+        self._rendered_fields = {}
         super().__init__()
 
     def get_template(self, template_name):
@@ -49,12 +51,13 @@ class FormRenderer(DjangoTemplates):
             control_css_classes=self.control_css_classes,
             form_css_classes=self.form_css_classes,
         )
+        self._rendered_fields.clear()
         return context
 
     def _amend_label(self, context, hide_checkbox_label=False):
+        if not isinstance(context['attrs'], dict):
+            context['attrs'] = {}
         if self.label_css_classes:
-            if not isinstance(context['attrs'], dict):
-                context['attrs'] = {}
             context['attrs']['class'] = ClassList(self.label_css_classes)
         widget_type = context['field'].widget_type
         if hide_checkbox_label and widget_type == 'checkbox':
@@ -105,11 +108,7 @@ class FormRenderer(DjangoTemplates):
 
     def _amend_collection(self, context):
         context.update(
-            add_collection_button='formset/default/buttons/add_collection.html',
-            remove_collection_button='formset/default/buttons/remove_collection.html',
-            help_text_template='formset/default/help_text.html',
             css_classes=self.collection_css_classes,
-            add_collection_label=context['collection'].add_label,
         )
         return context
 
@@ -119,14 +118,15 @@ class FormRenderer(DjangoTemplates):
 
     _context_modifiers = {
         'django/forms/div.html': _amend_form,
-        'django/forms/default.html': _amend_form,
         'formset/default/form.html': _amend_form,
+        'formset/default/form_dialog.html': _amend_form,
         'django/forms/label.html': _amend_label,
         'django/forms/widgets/checkbox_select.html': _amend_multiple_input,
         'django/forms/widgets/radio.html': _amend_multiple_input,
         'formset/default/fieldset.html': _amend_fieldset,
         'formset/default/detached_field.html': _amend_detached_field,
         'formset/default/collection.html': _amend_collection,
+        'formset/default/widgets/collection.html': _amend_collection,
         'formset/richtext/form_dialog.html': _amend_richtext_form_dialog,
     }
 

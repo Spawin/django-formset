@@ -1,6 +1,6 @@
 from django.db import models
 
-from formset.richtext.fields import RichTextField
+from formset.modelfields import RichTextField
 
 
 class BlogModel(models.Model):

@@ -258,14 +258,14 @@
 	}
 
 	.dj-submitted &.focused.invalid {
-		opacity: 1;
+		box-shadow: var(--django-formset-box-shadow-invalid);
 	}
 
-	&:not(.focused).invalid {
+	.dj-touched &:not(.focused).invalid {
 		border-color: var(--django-formset-color-invalid);
 	}
 
-	&:not(.focused).valid {
+	.dj-dirty &:not(.focused).valid {
 		border-color: var(--django-formset-color-valid);
 	}
 }

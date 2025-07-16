@@ -1,11 +1,41 @@
-import debounce from 'lodash.debounce';
 import isFinite from 'lodash.isfinite';
 import isString from 'lodash.isstring';
 import TomSelect from 'tom-select';
-import {RecursivePartial, TomSettings} from 'tom-select/src/types';
+import {RecursivePartial, TomOption, TomSettings} from 'tom-select/src/types';
 import {IncompleteSelect} from './IncompleteSelect';
 import {StyleHelpers} from './helpers';
-import styles from './DjangoSelectize.scss';
+import wrapperStyles from './DjangoSelectizeWrapper.scss';
+import shadowStyles from './DjangoSelectizeShadow.scss';
+
+
+TomSelect.define('infinite_scroll', infiniteScroll);
+
+function infiniteScroll(options: TomOption) {
+	// @ts-ignore
+	const tom_select = this as TomSelect;
+
+	tom_select.on('initialize', () => {
+		const dropdown_content = tom_select.dropdown_content;
+
+		async function handleScroll(event: Event) {
+			const tresholdBottom = dropdown_content.offsetHeight + (tom_select.activeOption?.offsetHeight ?? 20);
+			if (dropdown_content.scrollHeight - dropdown_content.scrollTop <= tresholdBottom) {
+				// triggers whenever the last <option>-element becomes visible inside its parent <select>
+				dropdown_content.removeEventListener('scroll', handleScroll);
+				tom_select.loadedSearches = {};
+				options.loadMore().then((isIncomplete: boolean) => {
+					if (isIncomplete) {
+						// re-attach scroll listener only if new options were loaded
+						dropdown_content.addEventListener('scroll', handleScroll);
+					}
+				});
+			}
+		}
+
+		// watch dropdown content scroll position
+		dropdown_content.addEventListener('scroll', handleScroll);
+	});
+}
 
 
 export class DjangoSelectize extends IncompleteSelect {
@@ -15,9 +45,12 @@ export class DjangoSelectize extends IncompleteSelect {
 	private readonly numOptions: number = 12;
 	public readonly tomSelect: TomSelect;
 	private readonly observer: MutationObserver;
-	private readonly initialValue: string|string[] = '';
+	private readonly initialValues: string[] = [];
 	private readonly baseSelector = '.ts-wrapper';
+	private readonly wrapperSelector = '[is="django-selectize"] + .shadow-wrapper';
+	private readonly shadowWrapper: HTMLElement;
 	private readonly uniqueIdentifier: string;
+	private offset: number;
 
 	constructor(tomInput: HTMLSelectElement) {
 		super(tomInput);
@@ -28,21 +61,34 @@ export class DjangoSelectize extends IncompleteSelect {
 			isMultiple = true;
 		}
 		this.nativeStyles = {...window.getComputedStyle(tomInput)} as CSSStyleDeclaration;
+		const nativeClasses = [...tomInput.classList];
 		if (isMultiple) {
 			// revert the above
 			tomInput.setAttribute('multiple', 'multiple');
 		}
 		this.numOptions = parseInt(tomInput.getAttribute('options') ?? this.numOptions.toString());
+		this.initialValues = this.getInitialValues(tomInput);
 		this.tomSelect = new TomSelect(tomInput, this.getSettings(tomInput));
+		this.tomSelect.wrapper.classList.remove(...nativeClasses);
+		this.offset = Object.keys(this.tomSelect.options).length;
 		this.observer = new MutationObserver(this.attributesChanged);
 		this.observer.observe(tomInput, {attributes: true});
-		this.initialValue = this.currentValue;
 		this.uniqueIdentifier = `ds-${Math.random().toString(36).substring(2, 15)}`;
 		this.shadowRoot = this.wrapInShadowRoot();
+		if (!(tomInput.nextElementSibling instanceof HTMLElement))
+			throw new Error('<select is="django-selectize" requires a sibling to wrap the shadow root');
+		this.shadowWrapper = tomInput.nextElementSibling;
+		this.shadowWrapper.classList.add(...nativeClasses);
+		if (nativeClasses.length === 0) {
+			// Bulma and Unstyled do not set a CSS class. At least set the min-width of the select element.
+			this.shadowWrapper.style.setProperty('min-width', this.nativeStyles.width);
+		}
+		if (!StyleHelpers.stylesAreInstalled(this.wrapperSelector)) {
+			this.applyWrapperStyles();
+		}
 		this.transferStyles();
 		this.appendIndividualStyleSheet();
 		tomInput.classList.add('dj-concealed');
-		this.validateInput(this.initialValue as string);
 	}
 
 	protected getSettings(tomInput: HTMLSelectElement) : RecursivePartial<TomSettings> {
@@ -56,31 +102,45 @@ export class DjangoSelectize extends IncompleteSelect {
 			lockOptgroupOrder: true,
 			searchField: ['label'],
 			plugins: {},
-			onFocus: this.touch,
+			onFocus: this.focused,
 			onBlur: this.blurred,
 			onType: this.inputted,
+			onChange: this.changed,
+			onItemRemove: this.itemRemoved,
 			render: {
 				no_results: `<div class="no-results">${gettext("No results found for '${input}'")}</div>`,
-			}
+			},
 		};
 		if (this.isIncomplete) {
 			settings.load = this.load;
+			settings.plugins = {
+				...settings.plugins,
+				'dropdown_input': {},
+				'infinite_scroll': {loadMore: this.loadMore.bind(this),}
+			};
+		} else if (tomInput.options.length > 24) {
+			settings.plugins = {
+				...settings.plugins,
+				'dropdown_input': {},
+			};
 		}
 		if (tomInput.hasAttribute('multiple')) {
 			settings.maxItems = parseInt(tomInput.getAttribute('max_items') ?? '3');
 			settings.plugins = {...settings.plugins, remove_button: {title: gettext("Remove item")}};
-			// tom-select has some issues to initialize items using the original input element
-			const scriptId = `${tomInput.getAttribute('id')}_initial`;
-			settings.items = JSON.parse(document.getElementById(scriptId)?.textContent ?? '[]');
 		}
 		return settings;
 	}
 
-	protected getValue = () => this.currentValue;
+	private getInitialValues(tomInput: HTMLSelectElement): string[] {
+		const scriptId = `${tomInput.getAttribute('id')}_initial`;
+		return JSON.parse(document.getElementById(scriptId)?.textContent ?? '[]');
+	}
+
+	protected getValue = () : string|string[] => this.initialValues;
 
 	protected async formResetted(event: Event) {
-		this.getValue = () => this.initialValue;
-		this.tomSelect.setValue(this.initialValue, true);
+		this.getValue = () => this.initialValues;
+		this.tomSelect.setValue(this.initialValues, true);
 		await this.reloadOptions();
 		this.getValue = () => this.currentValue;
 	}
@@ -101,12 +161,13 @@ export class DjangoSelectize extends IncompleteSelect {
 			this.tomSelect.input.replaceChildren();
 			await this.loadOptions(this.buildFetchQuery(0), (options: Array<OptionData>) => {
 				this.tomSelect.addOptions(options);
+				this.offset = options.length;
 			});
 		}
 		this.tomSelect.setValue(currentValue, silent);
 	}
 
-	private get currentValue(): string | string[] {
+	private get currentValue(): string|string[] {
 		const currentValue = this.tomSelect.getValue();
 		// make a deep copy because TomSelect mutates the array
 		return Array.isArray(currentValue) ? [...currentValue] : currentValue;
@@ -123,40 +184,80 @@ export class DjangoSelectize extends IncompleteSelect {
 	}
 
 	private load = (search: string, callback: Function) => {
+		this.tomSelect.clearOptions();
+		this.tomSelect.clearOptionGroups();
 		this.loadOptions(this.buildFetchQuery(0, {search}), (options: Array<OptionData>) => {
 			callback(options, this.extractOptGroups(options));
+			this.offset = options.length;
 		});
 	};
 
-	private blurred = () => {
-		const wrapper = this.shadowRoot.querySelector(this.baseSelector);
-		wrapper?.classList.remove('dirty');
+	private loadMore(): Promise<boolean> {
+		return new Promise<boolean>(resolve => {
+			const scrollTop = this.tomSelect.dropdown_content.scrollTop;
+			const optgroupmap = new Map<string, number>();
+			for (const optgroup of Object.values(this.tomSelect.optgroups)) {
+				optgroupmap.set(optgroup.label, optgroup.value);
+			}
+			const optgroupnames = Array.from(optgroupmap.keys());
+			let maxOptGroups = optgroupnames.length;
+			let maxOrder = Math.max(...Object.values(this.tomSelect.options).map(option => option.$order as number));
+			this.loadOptions(this.buildFetchQuery(this.offset, {search: this.tomSelect.lastQuery}), (options: Array<OptionData>) => {
+				options.forEach(o => {
+					maxOrder++;
+					if (isString(o.optgroup) && !optgroupnames.includes(o.optgroup)) {
+						maxOptGroups++;
+						this.tomSelect.addOptionGroup(maxOptGroups as unknown as string, {
+							label: o.optgroup,
+							disabled: false,
+							$order: maxOrder,
+						});
+						optgroupmap.set(o.optgroup, maxOptGroups);
+						optgroupnames.push(o.optgroup);
+					}
+					const option = {
+						label: o.label,
+						id: String(o.id),
+						disabled: false,
+						$order: maxOrder,
+					};
+					if (isString(o.optgroup)) {
+						this.tomSelect.addOption({...option, optgroup: optgroupmap.get(o.optgroup)});
+					} else {
+						this.tomSelect.addOption(option);
+					}
+				});
+				this.offset += options.length;
+				this.tomSelect.refreshOptions();
+				this.tomSelect.dropdown_content.scrollTo({top: scrollTop, behavior: 'instant'});
+				resolve(this.isIncomplete);
+			});
+		});
+	}
+
+	private focused = () => {
+		this.shadowWrapper.classList.add('focus');
+		this.tomSelect.input.dispatchEvent(new Event('focusin'));
 	};
 
-	private inputted = (event: Event) => {
-		const value = event as unknown as string;
+	private blurred = () => {
+		this.tomSelect.input.dispatchEvent(new Event('focusout'));
+		this.shadowWrapper.classList.remove('focus');
+	};
+
+	private inputted = (value: string|string[]) => {
 		const wrapper = this.shadowRoot.querySelector(this.baseSelector);
 		wrapper?.classList.toggle('dirty', value.length > 0);
 	};
 
-	private validateInput(value: String | Array<string>) {
-		const wrapper = this.shadowRoot.querySelector(this.baseSelector);
-		wrapper?.classList.remove('dirty');
-		const selectElem = this.tomSelect.input as HTMLSelectElement;
-		if (this.tomSelect.isRequired) {
-			selectElem.setCustomValidity(value ? "": "Value is missing.");
-		}
-		if (selectElem.multiple) {
-			for (let k = 0; k < selectElem.options.length; k++) {
-				const option = selectElem.options.item(k);
-				if (option) {
-					option.selected = value.indexOf(option.value) >= 0;
-				}
-			}
-		} else {
-			this.tomSelect.input.value = value as string;
-		}
-	}
+	private changed = (value: string|string[]) => {
+		this.tomSelect.input.dispatchEvent(new Event('change'));
+	};
+
+	private itemRemoved = (value: string|string[]) => {
+		this.tomSelect.input.dispatchEvent(new Event('focusin'));
+		this.tomSelect.input.dispatchEvent(new Event('focusout'));
+	};
 
 	private wrapInShadowRoot() : ShadowRoot {
 		const group = this.tomSelect.input.parentElement;
@@ -167,17 +268,25 @@ export class DjangoSelectize extends IncompleteSelect {
 		shadowWrapper.classList.add('shadow-wrapper');
 		const shadowRoot = shadowWrapper.attachShadow({mode: 'open', delegatesFocus: true});
 		shadowRoot.adoptedStyleSheets = [new CSSStyleSheet()];
-		this.tomSelect.input.insertAdjacentElement('beforebegin', shadowWrapper);
+		this.tomSelect.input.insertAdjacentElement('afterend', shadowWrapper);
 		const wrapper = group.removeChild(this.tomSelect.wrapper);
 		shadowRoot.appendChild(wrapper);
 		return shadowRoot;
+	}
+
+	private applyWrapperStyles() {
+		const declaredStyles = document.createElement('style');
+		declaredStyles.innerText = wrapperStyles;
+		document.head.appendChild(declaredStyles);
+		if (!declaredStyles.sheet)
+			throw new Error("Could not create <style> element");
 	}
 
 	private transferStyles() {
 		const sheet = DjangoSelectize.styleSheet;
 		const wrapperStyle = (this.shadowRoot.host as HTMLElement).style;
 		wrapperStyle.setProperty('display', this.nativeStyles.display);
-		sheet.replaceSync(styles);
+		sheet.replaceSync(shadowStyles);
 		const tomInput = this.tomSelect.input;
 		const lineHeight = window.getComputedStyle(tomInput).getPropertyValue('line-height');
 		const optionElement = tomInput.querySelector('option');
@@ -215,6 +324,16 @@ export class DjangoSelectize extends IncompleteSelect {
 				case `${this.baseSelector} .ts-dropdown`:
 					extraStyles = parseFloat(lineHeight) > 0 ? `line-height: calc(${lineHeight} * 1.2);` : 'line-height: 1.4em;';
 					break;
+				case `${this.baseSelector} .ts-dropdown .dropdown-input-wrap > input`:
+					extraStyles = StyleHelpers.extractStyles(tomInput, ['padding']);
+					break;
+				case `${this.baseSelector} .ts-dropdown .dropdown-input-wrap > input:focus-visible`:
+					tomInput.style.transition = 'none';
+					tomInput.classList.add('⁝focus');
+					extraStyles = StyleHelpers.extractStyles(tomInput, ['border-color', 'outline', 'transition']);
+					tomInput.classList.remove('⁝focus');
+					tomInput.style.transition = '';
+					break;
 				case `${this.baseSelector} .ts-dropdown .ts-dropdown-content`:
 					if (parseFloat(lineHeight) > 0) {
 						extraStyles =  `max-height: calc(${lineHeight} * 1.2 * ${displayNumOptions});`;
@@ -227,11 +346,11 @@ export class DjangoSelectize extends IncompleteSelect {
 					break;
 				case ':host-context([role="group"].dj-submitted) .ts-wrapper.invalid.focus .ts-control':
 					tomInput.style.transition = 'none';
-					tomInput.classList.add('-focus-', '-invalid-', 'is-invalid');  // is-invalid is a Bootstrap hack
+					tomInput.classList.add('⁝focus', '⁝invalid', 'is-invalid');  // is-invalid is a Bootstrap hack
 					extraStyles = StyleHelpers.extractStyles(tomInput, [
 						'background-color', 'border-color', 'box-shadow', 'color', 'outline', 'transition'
 					]);
-					tomInput.classList.remove('-focus-', '-invalid-', 'is-invalid');
+					tomInput.classList.remove('⁝focus', '⁝invalid', 'is-invalid');
 					tomInput.style.transition = '';
 					break;
 				default:
@@ -257,7 +376,7 @@ export class DjangoSelectize extends IncompleteSelect {
 			const cssRule = sheet.cssRules.item(index) as CSSStyleRule;
 			const selectorText = cssRule.selectorText.trim();
 			switch (selectorText) {
-				case ':host-context([role="group"].dj-touched.ds-unique-identifier) .ts-wrapper.has-items:not(.input-active) .ts-control':
+				case ':host-context([role="group"].dj-touched.ds-unique-identifier) .ts-wrapper:not(.invalid).has-items:not(.input-active) .ts-control':
 				case ':host-context([role="group"].dj-touched.ds-unique-identifier) .ts-wrapper.invalid:not(.input-active) .ts-control':
 					individualSheet.insertRule(cssRule.cssText.replace('.ds-unique-identifier', `.${this.uniqueIdentifier}`));
 					break;
@@ -268,7 +387,7 @@ export class DjangoSelectize extends IncompleteSelect {
 		this.shadowRoot.adoptedStyleSheets.push(individualSheet);
 	}
 
-	public initialize() {
+	public async initialize() {
 		// this function is called whenever an instance of <django-selectize> is added to the DOM
 		const sheet = this.shadowRoot.adoptedStyleSheets[0];
 		if (!DjangoSelectize.styleSheet)
@@ -283,22 +402,24 @@ export class DjangoSelectize extends IncompleteSelect {
 		const tomInput = this.tomSelect.input as HTMLSelectElement;
 
 		// some styles change when switching light/dark mode, so we need to update them
-		StyleHelpers.pushMediaQueryStyles([[
+		StyleHelpers.pushMediaQueryStyles(
 			sheet,
 			this.baseSelector, {
 				'--border-color': 'border-color',
 				'color': 'color',
 			},
 			tomInput
-		], [
+		);
+		StyleHelpers.pushMediaQueryStyles(
 			sheet,
 			`${this.baseSelector}.focus .ts-control`, {
 				'box-shadow': 'box-shadow',
 				'border-color': 'border-color',
 				'outline': 'outline',
 			},
-			tomInput, '-focus-'
-		], [
+			tomInput, '⁝focus'
+		);
+		StyleHelpers.pushMediaQueryStyles(
 			sheet,
 			`${this.baseSelector}.disabled .ts-control`, {
 				'background-color': 'background-color',
@@ -306,18 +427,22 @@ export class DjangoSelectize extends IncompleteSelect {
 				'color': 'color',
 				'outline': 'outline',
 			},
-			tomInput, '-disabled-'
-		]], true);
-
-		// the width of the control element must be updated when the window is resized
-		const widthStyles = StyleHelpers.mutableStyles(sheet, `${this.baseSelector} .ts-control`, {
-			'width': 'width',
-		}, tomInput);
-		window.addEventListener('resize', debounce(() => {
-			widthStyles();
-		}, 50, {leading: false, trailing: true}));
+			tomInput, '⁝disabled'
+		);
 		this.setupFilters(tomInput);
-		this.tomSelect.on('change', (value: String) => this.validateInput(value));
+		if (this.mustReloadOptions()) {
+			await this.reloadOptions();
+		} else {
+			this.tomSelect.setValue(this.initialValues, true);
+		}
+
+		this.getValue = () => this.currentValue;
+
+		// The built-in HTML select element can receive focus, but does not open the dropdown.
+		// Make TomSelect behave the same way.
+		this.tomSelect.input.addEventListener('focus', () => {
+			this.tomSelect.wrapper.classList.add('focus')
+		});
 	}
 
 	private attributesChanged = (mutationsList: Array<MutationRecord>) => {
@@ -336,9 +461,12 @@ export class DjangoSelectize extends IncompleteSelect {
 		}
 	};
 
-	public setValue(value: string|number) {
-		const emitChangeEvent = () => this.tomSelect.input.dispatchEvent(new Event('change', {bubbles: true}));
+	private	emitChangeEvent() {
+		this.tomSelect.input.dispatchEvent(new Event('change', {bubbles: true}));
+		this.tomSelect.input.dispatchEvent(new Event('focusout'));
+	}
 
+	public setValue(value: string|number) {
 		if (isFinite(value)) {
 			// if the value is a number, enforce re-fetching object from the server
 			this.loadOptions(this.buildFetchQuery(0, {pk: value.toString()}), (options: Array<OptionData>) => {
@@ -351,16 +479,37 @@ export class DjangoSelectize extends IncompleteSelect {
 				}
 			}).then(() => {
 				this.tomSelect.setValue(value.toString(), true);
-				emitChangeEvent();
+				this.emitChangeEvent();
 			});
 		} else if (isString(value)) {
 			this.tomSelect.setValue(value, true);
-			emitChangeEvent();
+			this.emitChangeEvent();
 		}
 	}
 
-	public setValues(values: Array<string>) {
-		this.tomSelect.setValue(values, true);
+	public setValues(values: FieldValue[]) {
+		const stringValues = values.filter(v => isString(v));
+		if (values.length !== stringValues.length) {
+			const finiteValues = values.filter(v => isFinite(v)).map(v => v.toString());
+			this.loadOptions(this.buildFetchQuery(0, {pk: finiteValues.join(',')}), (options: Array<OptionData>) => {
+				const currentValues = this.tomSelect.getValue() as string[];
+				options.forEach(option => {
+					if (currentValues.includes(option.id)) {
+						// object already loaded by tom-select
+						this.tomSelect.updateOption(option.id, option);
+					} else {
+						// object must be added to tom-select
+						this.tomSelect.addOption(option);
+					}
+				});
+			}).then(() => {
+				this.tomSelect.setValue([...stringValues, ...finiteValues], true);
+				this.emitChangeEvent();
+			});
+		} else {
+			this.tomSelect.setValue(stringValues, true);
+			this.emitChangeEvent();
+		}
 	}
 }
 

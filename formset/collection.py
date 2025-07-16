@@ -1,4 +1,5 @@
 import operator
+import types
 from functools import reduce
 
 from django.core import validators
@@ -12,10 +13,12 @@ from django.utils.datastructures import MultiValueDict
 from django.utils.text import get_text_list
 from django.utils.translation import gettext_lazy
 
-from formset.exceptions import FormCollectionError
-from formset.fields import Activator
+from formset.formfields.activator import Activator
+from formset.forms import DeclarativeFieldsetMetaclass, FormMixin, FormsetModelFormMetaclass
 from formset.renderers.default import FormRenderer
-from formset.utils import MARKED_FOR_REMOVAL, FormMixin, FormsetErrorList, HolderMixin, RenderableDetachedFieldMixin
+from formset.utils import (
+    MARKED_FOR_REMOVAL, CollectionFieldMixin, FormsetErrorList, HolderMixin, RenderableDetachedFieldMixin,
+)
 
 COLLECTION_ERRORS = '_collection_errors_'
 
@@ -37,14 +40,24 @@ class FormCollectionMeta(MediaDefiningClass):
                         (RenderableDetachedFieldMixin, value.__class__),
                         {}
                     )
-                if isinstance(value, BaseForm) and not isinstance(value, FormMixin):
-                    value.__class__ = type(
-                        value.__class__.__name__,
-                        (FormMixin, value.__class__),
-                        {}
-                    )
-                    value.error_class = FormsetErrorList
+                elif not isinstance(value, FormMixin):
+                    if isinstance(value, BaseModelForm):
+                        value.__class__ = types.new_class(
+                            value.__class__.__name__,
+                            bases=(FormMixin, value.__class__),
+                            kwds={'metaclass': FormsetModelFormMetaclass},
+                        )
+                        value.error_class = FormsetErrorList
+                    elif isinstance(value, BaseForm):
+                        value.__class__ = types.new_class(
+                            value.__class__.__name__,
+                            bases=(FormMixin, value.__class__),
+                            kwds={'metaclass': DeclarativeFieldsetMetaclass},
+                        )
+                        value.error_class = FormsetErrorList
                 attrs['declared_holders'][key] = value
+            elif isinstance(value, CollectionFieldMixin):
+                pass
 
         new_class = super().__new__(cls, name, bases, attrs)
 
@@ -127,6 +140,7 @@ class BaseFormCollection(HolderMixin, RenderableMixin):
             if isinstance(self.default_renderer, type):
                 renderer = renderer()
         self.renderer = renderer
+        super().__init__()
 
     def iter_single(self):
         for name, declared_holder in self.declared_holders.items():
@@ -147,14 +161,12 @@ class BaseFormCollection(HolderMixin, RenderableMixin):
             yield holder
 
     def iter_many(self):
-        if self.initial:
-            if not isinstance(self.initial, list):
-                errmsg = "{class_name} is declared to have siblings, but provided argument `{argument}` is not a list"
-                raise FormCollectionError(errmsg.format(class_name=self.__class__.__name__, argument='initial'))
+        if isinstance(self.initial, list):
             num_siblings = max(self.min_siblings, len(self.initial) + self.extra_siblings)
             if self.max_siblings is not None:
                 num_siblings = min(self.max_siblings, num_siblings)
         else:
+            self.initial = []
             num_siblings = max(self.min_siblings, self.extra_siblings)
 
         first, last = 0, len(self.declared_holders.items()) - 1
@@ -162,9 +174,7 @@ class BaseFormCollection(HolderMixin, RenderableMixin):
         for position in range(num_siblings):
             for item_num, (name, declared_holder) in enumerate(self.declared_holders.items()):
                 prefix = f'{self.prefix}.{position}.{name}' if self.prefix else f'{position}.{name}'
-                initial = None
-                if self.initial and position < len(self.initial):
-                    initial = self.initial[position].get(name)
+                initial = self.initial[position].get(name) if position < len(self.initial) else None
                 if initial is None:
                     initial = declared_holder.initial
                 holder = declared_holder.replicate(
@@ -249,6 +259,7 @@ class BaseFormCollection(HolderMixin, RenderableMixin):
             self._errors = ErrorList()
             for index, data in enumerate(self.data):
                 if data is None:
+                    # JavaScript allows arrays with holes
                     continue
                 initial = self.initial[index] if self.initial and index < len(self.initial) else None
                 instance = self.retrieve_instance(data)
@@ -286,7 +297,7 @@ class BaseFormCollection(HolderMixin, RenderableMixin):
                 if not isinstance(declared_holder, (BaseForm, BaseFormCollection)):
                     # TODO: Button can have a value and could be validated since it is a field
                     continue
-                if name in self.data:
+                if isinstance(self.data, dict) and name in self.data:
                     instance = self.retrieve_instance(self.data[name])
                     holder = declared_holder.replicate(
                         data=self.data[name],
@@ -389,7 +400,10 @@ class BaseFormCollection(HolderMixin, RenderableMixin):
         if self._errors is None or not self.is_valid():
             raise AttributeError(f"'{self.__class__}' object has no attribute 'cleaned_data'")
         if self.has_many:
-            return [{name: holder.cleaned_data} for valid_holders in self.valid_holders for name, holder in valid_holders.items()]
+            return [
+                {name: holder.cleaned_data for name, holder in valid_holders.items()}
+                for valid_holders in self.valid_holders
+            ]
         else:
             return {name: holder.cleaned_data for name, holder in self.valid_holders.items()}
 
@@ -404,6 +418,9 @@ class BaseFormCollection(HolderMixin, RenderableMixin):
         if not (renderer or self.renderer):
             renderer = FormRenderer()
         return super().render(template_name, context, renderer)
+
+    __str__ = render
+    __html__ = render
 
     def model_to_dict(self, instance):
         """
@@ -492,15 +509,6 @@ class BaseFormCollection(HolderMixin, RenderableMixin):
                     except IntegrityError as error:
                         holder._update_errors(error)
 
-    __str__ = render
-    __html__ = render
-
-
-class FormCollection(BaseFormCollection, metaclass=FormCollectionMeta):
-    """
-    Base class for a collection of forms. Attributes of this class which inherit from
-    `django.forms.forms.BaseForm` are managed by this class.
-    """
     def get_field(self, field_path):
         if self.has_many:
             index, key, path = field_path.split('.', 2)
@@ -508,3 +516,10 @@ class FormCollection(BaseFormCollection, metaclass=FormCollectionMeta):
         else:
             key, path = field_path.split('.', 1)
         return self.declared_holders[key].get_field(path)
+
+
+class FormCollection(BaseFormCollection, metaclass=FormCollectionMeta):
+    """
+    Base class for a collection of forms. Attributes of this class which inherit from
+    `django.forms.forms.BaseForm` are managed by this class.
+    """

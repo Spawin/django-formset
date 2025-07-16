@@ -2,14 +2,53 @@ import json
 import pytest
 from bs4 import BeautifulSoup
 
-from django.test import Client, RequestFactory
+from django.forms import fields, ModelForm, widgets
 from django.utils.timezone import datetime
 from django.views.generic.edit import CreateView, UpdateView
 
 from formset.views import FormViewMixin
+from formset.widgets import UploadedFileInput, Selectize, SelectizeMultiple
 
-from testapp.forms.person import ModelPersonForm
 from testapp.models import OpinionModel, PersonModel
+
+
+class PersonForm(ModelForm):
+    field_order = ['full_name', 'avatar', 'activity_days', 'activity_datetime']
+    activity_datetime = fields.DateTimeField(
+        label="Activity timestamp",
+    )
+    activity_days = fields.IntegerField(
+        label="Activity days",
+    )
+
+    class Meta:
+        model = PersonModel
+        fields = '__all__'
+        fields_map = {'extra_data': ['activity_datetime', 'activity_days']}
+        widgets = {
+            'avatar': UploadedFileInput,
+            'gender': widgets.RadioSelect,
+            'opinion': Selectize(search_lookup='label__icontains'),
+            'opinions': SelectizeMultiple(search_lookup='label__icontains'),
+        }
+
+
+@pytest.fixture(scope='module')
+def django_db_setup(django_db_blocker):
+    with django_db_blocker.unblock():
+        OpinionModel.objects.all().delete()
+        for counter in range(1, 3000):
+            label = f"Opinion {counter:04}"
+            OpinionModel.objects.create(tenant=1, label=label)
+        for counter in range(1, 500):
+            label = f"Übung {counter:04}"
+            OpinionModel.objects.create(tenant=1, label=label)
+        for counter in range(1, 500):
+            label = f"Оптион {counter:04}"
+            OpinionModel.objects.create(tenant=1, label=label)
+        for counter in range(1, 500):
+            label = f"επιλογή {counter:04}"
+            OpinionModel.objects.create(tenant=1, label=label)
 
 
 @pytest.fixture(params=[None, 'bootstrap', 'bulma', 'foundation', 'tailwind', 'uikit'])
@@ -22,18 +61,18 @@ def create_view(framework):
     view_class = type('CreateView', (FormViewMixin, CreateView), {})
     return view_class.as_view(
         template_name='testapp/native-form.html',
-        form_class=ModelPersonForm,
+        form_class=PersonForm,
         extra_context={'framework': framework},
         success_url = '/success',
     )
 
 
 @pytest.fixture
-def native_soup(create_view):
+def native_soup(create_view, rf):
     view_initkwargs = create_view.view_initkwargs
     framework = view_initkwargs['extra_context']['framework']
     url = f'/{framework}/person' if framework else '/default/person'
-    request = RequestFactory().get(url)
+    request = rf.get(url)
     response = create_view(request)
     response.render()
     soup = BeautifulSoup(response.content, 'html.parser')
@@ -100,8 +139,7 @@ def test_render_radio_field(native_soup):
 
 
 @pytest.fixture(scope='function')
-def uploaded_file(native_soup):
-    client = Client()
+def uploaded_file(native_soup, client):
     url = '/default/person'
     with open('testapp/assets/python-django.png', 'rb') as fp:
         response = client.post(url, {'temp_file': fp, 'image_height': 128})
@@ -117,13 +155,13 @@ def update_view():
     return view_class.as_view(
         model=PersonModel,
         template_name='testapp/native-form.html',
-        form_class=ModelPersonForm,
+        form_class=PersonForm,
         success_url='/success',
     )
 
 
 @pytest.mark.django_db
-def test_modify_person(create_view, update_view):
+def test_modify_person(create_view, update_view, rf):
     opinions = OpinionModel.objects.order_by('?').values_list('id', flat=True)
     form_data = {
         'full_name': "John Doe",
@@ -133,8 +171,10 @@ def test_modify_person(create_view, update_view):
         'opinion': opinions[0],
         'opinions': opinions[10:15],
         'continent': '2',
+        'activity_days': 17,
+        'activity_datetime': '2021-01-01T12:00:00',
     }
-    request = RequestFactory().post('/default/person', form_data)
+    request = rf.post('/default/person', form_data)
     response = create_view(request)
     assert response.status_code == 200
     assert json.loads(response.getvalue())['success_url'] == '/success'
@@ -156,7 +196,7 @@ def test_modify_person(create_view, update_view):
         'opinions': opinions[190:201],
         'continent': '1',
     })
-    request = RequestFactory().post('/default/person', form_data)
+    request = rf.post('/default/person', form_data)
     response = update_view(request, pk=person.pk)
     assert response.status_code == 200
     assert json.loads(response.getvalue())['success_url'] == '/success'
@@ -170,7 +210,7 @@ def test_modify_person(create_view, update_view):
     assert person.opinions.exclude(id__in=list(form_data['opinions'])).count() == 0
     assert person.continent == 1
 
-    request = RequestFactory().get('/default/person')
+    request = rf.get('/default/person')
     response = update_view(request, pk=person.pk)
     assert response.status_code == 200
     response.render()

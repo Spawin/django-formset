@@ -1,12 +1,14 @@
 import functools
 import json
+import types
 
 from django.conf import settings
 from django.core.files.uploadedfile import UploadedFile
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db.models import Model
 from django.db.models.fields.files import FieldFile
-from django.forms.models import construct_instance
+from django.forms.forms import BaseForm
+from django.forms.models import BaseModelForm, construct_instance
 from django.forms.renderers import get_default_renderer
 from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.template.loader import get_template
@@ -22,13 +24,14 @@ from docutils.parsers.rst import Parser
 from docutils.writers import get_writer_class
 
 from formset.calendar import CalendarResponseMixin
-from formset.utils import FormMixin
+from formset.forms import DeclarativeFieldsetMetaclass, FormsetModelFormMetaclass, FormMixin
 from formset.views import (
     FileUploadMixin, IncompleteSelectResponseMixin, FormCollectionView, FormCollectionViewMixin, FormViewMixin,
     EditCollectionView, BulkEditCollectionView
 )
 
 from testapp.demo_helpers import SessionFormCollectionViewMixin
+from testapp.forms.accordion import AccordionForm
 from testapp.forms.address import AddressForm
 from testapp.forms.advertisement import AdvertisementForm
 from testapp.forms.article import ArticleForm
@@ -41,21 +44,25 @@ from testapp.forms.contact import (
 )
 from testapp.forms.birthdate import BirthdateBoxForm, BirthdateCalendarForm, BirthdateInputForm, BirthdatePickerForm
 from testapp.forms.booking import BookingBoxForm, BookingCalendarForm, BookingPickerForm
+from testapp.forms.button import ButtonActionsForm
 from testapp.forms.cafeteria import CafeteriaCollection, CoffeeOrderCollection
+from testapp.forms.carousel import CarouselForm
 from testapp.forms.checkout import CheckoutCollection
 from testapp.forms.country import CountryForm
 from testapp.forms.county import CountyForm
-from testapp.forms.customer import CustomerCollection
+from testapp.forms.customer import CustomerForm
 from testapp.forms.gallerycollection import GalleryCollection
-from testapp.forms.issue import EditIssueCollection
+from testapp.forms.galleryform import GalleryImageForm
+from testapp.forms.issue import EditIssueCollection, EditIssueManyCollection
 from testapp.forms.moment import MomentBoxForm, MomentCalendarForm, MomentInputForm, MomentPickerForm
 from testapp.forms.moon import MoonForm, MoonCalendarRenderer
 from testapp.forms.multivalue import MultiValueForm
 from testapp.forms.opinion import OpinionForm
 from testapp.forms.person import (
-    ButtonActionsForm, sample_person_data, BootstrapRenderedPersonForm, ModelPersonForm, PersonForm,
+    sample_person_data, BootstrapRenderedPersonForm, ModelPersonForm, PersonForm,
 )
 from testapp.forms.phone import PhoneForm
+from testapp.forms.product import ProductForm
 from testapp.forms.poll import ModelPollForm, PollCollection
 from testapp.forms.profile import ProfileCollection
 from testapp.forms.questionnaire import QuestionnaireForm
@@ -64,7 +71,7 @@ from testapp.forms.state import StateFilteredForm, StateForm, StatesForm
 from testapp.forms.terms_of_use import AcceptTermsCollection
 from testapp.forms.user import UserCollection
 from testapp.forms.upload import UploadForm
-from testapp.models import BlogModel, Company, IssueModel, PersonModel, PollModel, Reporter, User
+from testapp.models import BlogModel, Company, IssueModel, PersonModel, PollModel, ProductModel, Reporter, User
 from testapp.models.gallery import Gallery
 
 
@@ -165,7 +172,7 @@ class DemoViewMixin:
 class DemoFormViewMixin(DemoViewMixin, CalendarResponseMixin, IncompleteSelectResponseMixin, FileUploadMixin, FormViewMixin):
     template_name = 'testapp/native-form.html'
     extra_context = {
-        'click_actions': 'disable -> submit -> reload !~ scrollToError'
+        'click_actions': 'disable -> submit -> reload !~ scrollToError',
     }
     extra_doc = None
 
@@ -178,14 +185,27 @@ class DemoFormViewMixin(DemoViewMixin, CalendarResponseMixin, IncompleteSelectRe
 
     def get_form_class(self):
         form_class = super().get_form_class()
-        if issubclass(form_class, FormMixin):
-            return form_class
+        renderer_class = import_string(f'formset.renderers.{self.framework}.FormRenderer')
         attrs = self.get_css_classes()
         attrs.pop('button_css_classes', None)
-        renderer_class = import_string(f'formset.renderers.{self.framework}.FormRenderer')
+        renderer = renderer_class(**attrs)
+        if issubclass(form_class, FormMixin):
+            if form_class.default_renderer is None:
+                form_class.default_renderer = renderer
+            return form_class
         if self.mode != 'native':
-            renderer = renderer_class(**attrs)
-            form_class = type(form_class.__name__, (FormMixin, form_class), {'default_renderer': renderer})
+            if issubclass(form_class, BaseModelForm):
+                metaclass = FormsetModelFormMetaclass
+            elif issubclass(form_class, BaseForm):
+                metaclass = DeclarativeFieldsetMetaclass
+            else:
+                raise RuntimeError("Must never reach this point.")
+            form_class = types.new_class(
+                form_class.__name__,
+                bases=(FormMixin, form_class),
+                kwds={'metaclass': metaclass},
+                exec_body=lambda ns: ns.update(default_renderer=renderer),
+            )
         return form_class
 
 
@@ -311,6 +331,18 @@ class CompaniesCollectionView(DemoFormCollectionViewMixin, BulkEditCollectionVie
         return super().form_collection_valid(form_collection)
 
 
+class ComponentFormView(DemoModelFormView):
+    filtered_type = None
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        return queryset.filter(type=self.filtered_type)
+
+    def form_valid(self, form):
+        form.instance.type = self.filtered_type
+        return super().form_valid(form)
+
+
 class GalleryCollectionView(DemoFormCollectionViewMixin, SessionFormCollectionViewMixin, EditCollectionView):
     model = Gallery
     collection_class = GalleryCollection
@@ -349,7 +381,7 @@ demo_css_classes = {
                 'submit': 'd-grid col-3',
                 'reset': 'd-grid col-3',
             },
-            'fieldset_css_classes': 'border p-3',
+            'fieldset_css_classes': 'border rounded p-3 mt-3 mb-2',
             'button_css_classes': 'mt-4',
         },
         'address': {
@@ -603,20 +635,28 @@ urlpatterns = [
     path('terms_of_use', DemoFormCollectionView.as_view(
         collection_class=AcceptTermsCollection,
         template_name='testapp/form-collection-no-buttons.html',
-    ), name='simplecontact'),
+    ), name='terms_of_use'),
     path('issue', IssueCollectionView.as_view(), name='issue'),
+    path('issue-many', IssueCollectionView.as_view(collection_class=EditIssueManyCollection), name='issue-many'),
     path('coffe', DemoFormCollectionView.as_view(
         collection_class=CoffeeOrderCollection,
     ), name='coffe'),
     path('cafeteria', DemoFormCollectionView.as_view(
         collection_class=CafeteriaCollection,
     ), name='cafeteria'),
-    path('customer', DemoFormCollectionView.as_view(
-        collection_class=CustomerCollection,
+    path('customer', DemoFormView.as_view(
+        form_class=CustomerForm,
+        initial={'billing_address.recipient': "John Doe", 'billing_address.postal_code': "12345",
+                 'billing_address.city': "Springfield", 'use_billing_address': True},
     ), name='customer'),
     path('contact', DemoFormCollectionView.as_view(
         collection_class=ContactCollection,
-        initial={'person': sample_person_data, 'numbers': [{'number': {'phone_number': "+1 234 567 8900"}}, {'number': {'phone_number': "+43 1 2345678"}}]},
+        initial={
+            'person': sample_person_data,
+            'numbers': [
+                {'number': {'phone_number': "+1 234 567 8900", 'label': 'home'}},
+                {'number': {'phone_number': "+43 1 2345678", 'label': 'mobile'}}
+            ]},
     ), name='contact'),
     path('contactlist', DemoFormCollectionView.as_view(
         collection_class=ContactCollectionList,
@@ -657,9 +697,15 @@ urlpatterns = [
         model=PersonModel,
         extra_context={
             'click_actions': 'disable -> submit -> reload !~ scrollToError',
-            'force_submission': True,
         }
     ), name='person'),
+    path('product', DemoModelFormView.as_view(
+        form_class=ProductForm,
+        model=ProductModel,
+        extra_context={
+            'click_actions': 'disable -> submit -> reload !~ scrollToError',
+        }
+    ), name='product'),
     path('person-bootstrap-renderer', DemoFormView.as_view(
         form_class=BootstrapRenderedPersonForm,
         template_name='testapp/extended-form.html',
@@ -700,9 +746,22 @@ urlpatterns = [
         template_name='testapp/button-actions.html',
         extra_context={'click_actions': 'clearErrors -> disable -> spinner -> submit -> okay(1500) -> proceed !~ enable -> bummer(9999)'},
     ), name='button-actions'),
-    path('gallerycollection', GalleryCollectionView.as_view(
-    ), name='gallerycollection'),
     path('multi-value', DemoFormView.as_view(
         form_class=MultiValueForm
     ), name='multi-value'),
+    path('gallerycollection', GalleryCollectionView.as_view(), name='gallerycollection'),
+    path('galleryform', DemoModelFormView.as_view(
+        form_class=GalleryImageForm,
+        model=Gallery,
+    ), name='galleryform'),
+    path('accordion', ComponentFormView.as_view(
+        form_class=AccordionForm,
+        model=AccordionForm._meta.model,
+        filtered_type='accordion',
+    ), name='accordion'),
+    path('carousel', ComponentFormView.as_view(
+        form_class=CarouselForm,
+        model=CarouselForm._meta.model,
+        filtered_type='carousel',
+    ), name='carousel'),
 ]

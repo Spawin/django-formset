@@ -1,20 +1,24 @@
+from functools import lru_cache
+
 from django.core import validators
 from django.core.exceptions import ImproperlyConfigured
 from django.db.models.fields.files import FieldFile
 from django.forms import boundfield
 from django.forms.fields import FileField, JSONField
 from django.utils.functional import cached_property
+from django.utils.safestring import mark_safe
 from django.utils.translation import gettext_lazy as _
 
-from formset.fields import Activator, FileFieldMixin
+from formset.formfields.activator import Activator
 from formset.renderers import ClassList
 from formset.upload import get_file_info
+from formset.utils import FileFieldMixin
 from formset.widgets import UploadedFileInput
 
 
 class CheckboxInputMixin:
     """
-    This hack is required for adding the field's label to the rendering context.
+    This special mixin is required for adding the field's label to the rendering context.
     This is to make the single checkbox to be rendered with its label after the input field.
     """
     def get_context(self, name, value, attrs):
@@ -98,7 +102,7 @@ class BoundField(boundfield.BoundField):
             attrs['pattern'] = self.field.regex.pattern
         if isinstance(self.field, JSONField):
             attrs['use_json'] = True
-        if isinstance(self.field, Activator):
+        if isinstance(self.field, Activator) or self.widget_type == 'dualselector':
             label = self.name.replace('_', ' ').title() if self.field.label is None else self.field.label
             attrs['label'] = label  # remember label for ButtonWidget.get_context()
         return attrs
@@ -128,12 +132,59 @@ class BoundField(boundfield.BoundField):
             return get_file_info(value)
         return value
 
+    @lru_cache
+    def _get_fieldset_info(self):
+        fieldset = None
+        parts = self.name.split('.')[:-1]
+        declared_fieldsets = getattr(self.form, 'declared_fieldsets', {})
+        for name in parts:
+            if fieldset := declared_fieldsets.get(name):
+                declared_fieldsets = fieldset.declared_fieldsets
+            else:
+                parts = []
+                break
+        return fieldset, '.'.join(parts)
+
+    def as_fieldset(self):
+        fieldset, fieldset_name = self._get_fieldset_info()
+        return fieldset and fieldset_name != self.renderer._rendered_fields.get(self.name)
+
+    def __str__(self):
+        """Render this field as an HTML widget or as fieldset with widgets."""
+        rendered_fieldset_name = self.renderer._rendered_fields.get(self.name)
+        if rendered_fieldset_name is True:
+            return ''  # field already rendered
+        _, fieldset_name = self._get_fieldset_info()
+        if (
+            rendered_fieldset_name is None and fieldset_name or
+            rendered_fieldset_name and rendered_fieldset_name != fieldset_name
+        ):
+            return self._render_fieldset()
+        return super().__str__()
+
+    def _render_fieldset(self):
+        fieldset, fieldset_name = self._get_fieldset_info()
+        field_names = [f'{fieldset_name}.{field_name}' for field_name in fieldset.declared_fields.keys()]
+        context = fieldset.get_context()
+        context.update(
+            name=fieldset_name,
+            fieldset=[self.form[field_name] for field_name in field_names],
+        )
+        self.renderer._rendered_fields.update({field_name: fieldset_name for field_name in field_names})
+        rendered = self.renderer.render(fieldset.template_name, context)
+        self.renderer._rendered_fields.update({field_name: True for field_name in field_names})
+        return mark_safe(rendered)
+
     def _get_client_messages(self):
         """
         Extract server validation error messages to be rendered by the client side.
         """
         client_messages = {}
         server_messages = self.field.error_messages
+        for validator in self.field.validators:
+            validator_code = getattr(validator, 'code', None)
+            if validator_code == 'invalid':
+                client_messages['type_mismatch'] = client_messages['pattern_mismatch'] = validator.message
         if self.field.required is True:
             if self.widget_type == 'checkboxselectmultiple':
                 client_messages['custom_error'] = _("At least one checkbox must be selected.")
@@ -145,11 +196,6 @@ class BoundField(boundfield.BoundField):
             client_messages['type_mismatch'] = server_messages['invalid_choice']
         if 'bound_ordering' in server_messages:
             client_messages['custom_error'] = server_messages['bound_ordering']
-        else:
-            for validator in self.field.validators:
-                validator_code = getattr(validator, 'code', None)
-                if validator_code == 'invalid':
-                    client_messages['type_mismatch'] = client_messages['pattern_mismatch'] = validator.message
         if getattr(self.field, 'max_length', None) is not None:
             data = {'max_length': self.field.max_length}
             max_length_message = _("Ensure this value has at most %(max_length)s characters.")

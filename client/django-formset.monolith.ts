@@ -4,7 +4,7 @@ import {StyleHelpers} from './django-formset/helpers';
 
 // remember to always reflect imports below here also in django-formset.ts
 import {DjangoSelectizeElement} from './django-formset/DjangoSelectize';
-import {CountrySelectizeElement} from './django-formset/CountrySelectize';
+import {CountrySelectizeElement} from './django-formset/DjangoSelectizeCountry';
 import {SortableSelectElement} from './django-formset/SortableSelect';
 import {DualSelectorElement} from './django-formset/DualSelector';
 import {PhoneNumberElement} from './django-formset/PhoneNumber';
@@ -16,15 +16,15 @@ import {FormDialogElement} from './django-formset/FormDialog';
 import {StepperCollectionElement} from './django-formset/StepperCollection';
 
 
-window.addEventListener('DOMContentLoaded', (event) => {
+function handleDOMLoaded() {
 	const customElementNames = Array<string>();
 	const promises = Array<Promise<any>>();
 	StyleHelpers.attachPseudoStyles();
 
 	window.customElements.define('django-selectize', DjangoSelectizeElement, {extends: 'select'});
 	customElementNames.push('django-selectize');
-	window.customElements.define('django-country-selectize', CountrySelectizeElement, {extends: 'select'});
-	customElementNames.push('django-country-selectize');
+	window.customElements.define('django-selectize-country', CountrySelectizeElement, {extends: 'select'});
+	customElementNames.push('django-selectize-country');
 	window.customElements.define('django-sortable-select', SortableSelectElement);
 	customElementNames.push('django-sortable-select');
 	window.customElements.define('django-dual-selector', DualSelectorElement, {extends: 'select'});
@@ -84,8 +84,12 @@ window.addEventListener('DOMContentLoaded', (event) => {
 	promises.push(...customElementNames.map(name => window.customElements.whenDefined(name)));
 	Promise.all(promises).then(() => {
 		window.customElements.define('django-formset', DjangoFormsetElement);
-		window.customElements.whenDefined('django-formset').then(() => {
-			StyleHelpers.detachPseudoStyles();
-		});
 	}).catch(error => console.error(`Failed to initialize django-formset: ${error}`));
-});
+}
+
+
+if (document.readyState === 'loading') {
+	window.addEventListener('DOMContentLoaded', handleDOMLoaded);
+} else {
+	handleDOMLoaded();
+}

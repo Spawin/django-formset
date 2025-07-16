@@ -10,15 +10,12 @@ import template from 'lodash.template';
 import Sortable, {SortableEvent} from 'sortablejs';
 import {StyleHelpers} from './helpers';
 import {FileUploadWidget} from './FileUploadWidget';
-import {ErrorKey, FieldErrorMessages} from './Widget';
+import {FieldErrorPlaceholder} from './Widget';
 import {parse} from '../build/tag-attributes';
 import spinnerIcon from '../icons/spinner.svg';
 import okayIcon from '../icons/okay.svg';
 import bummerIcon from '../icons/bummer.svg';
 import mainStyles from './DjangoFormset.scss';
-
-type FieldElement = HTMLInputElement|HTMLSelectElement|HTMLTextAreaElement;
-type FieldValue = string|Array<string|Object>;
 
 const NON_FIELD_ERRORS = '__all__';
 const COLLECTION_ERRORS = '_collection_errors_';
@@ -29,10 +26,15 @@ style.innerText = mainStyles;
 document.head.appendChild(style);
 
 if (style.sheet instanceof CSSStyleSheet) {
-	StyleHelpers.pushMediaQueryStyles([[style.sheet, 'django-formset', {
-		'--django-formset-background-color': 'background-color',
-		'--django-formset-foreground-color': 'color',
-	}, document.body]]);
+	StyleHelpers.pushMediaQueryStyles(
+		style.sheet,
+		'django-formset',
+		{
+			'--django-formset-background-color': 'background-color',
+			'--django-formset-foreground-color': 'color',
+		},
+		document.body
+	);
 }
 
 
@@ -54,8 +56,7 @@ class FieldGroup {
 	private readonly fieldElements: Array<FieldElement>;
 	private readonly initialDisabled: Array<boolean>;
 	private readonly initialRequired: Array<boolean>;
-	public readonly errorPlaceholder: Element|null;
-	private readonly errorMessages: FieldErrorMessages;
+	public readonly errorPlaceholder: FieldErrorPlaceholder;
 	private readonly fileUploader?: FileUploadWidget;
 	private readonly updateVisibility: Function;
 	private readonly updateDisabled: Function;
@@ -66,8 +67,6 @@ class FieldGroup {
 		this.element = element;
 		let resolveInitialized: Function;
 		this.isInitialized = new Promise(r => resolveInitialized = r);
-		this.errorPlaceholder = element.querySelector('.dj-errorlist > .dj-placeholder');
-		this.errorMessages = new FieldErrorMessages(element);
 		const requiredAny = element.classList.contains('dj-required-any');
 
 		// <div role="group"> can contain one or more <input type="checkbox"> or <input type="radio"> elements
@@ -88,41 +87,44 @@ class FieldGroup {
 				case 'file':
 					// @ts-ignore
 					this.fileUploader = new FileUploadWidget(this, element);
-					element.addEventListener('invalid', () => this.showErrorMessage(element));
+					element.addEventListener('invalid', () => this.errorPlaceholder.reportValidationError());
 					break;
 				default:
 					element.addEventListener('focus', () => this.touch());
 					element.addEventListener('input', () => this.inputted());
 					element.addEventListener('blur', () => this.validate());
-					element.addEventListener('invalid', () => this.showErrorMessage(element));
+					element.addEventListener('invalid', () => this.errorPlaceholder.reportValidationError());
 					break;
 			}
 		}
-		this.fieldElements = Array<FieldElement>(0).concat(inputElements);
+		this.fieldElements = [...inputElements];
 
 		// <div role="group"> can contain at most one <select> element
 		const allowedSelects = (s: Element) => s instanceof HTMLSelectElement && s.name && s.form === form.element;
 		const selectElement = Array.from(element.getElementsByTagName('SELECT')).filter(allowedSelects).at(0);
 		if (selectElement instanceof HTMLSelectElement) {
-			selectElement.addEventListener('focus', () => this.touch());
+			selectElement.addEventListener('focusin', () => this.touch());
+			selectElement.addEventListener('focusout', () => this.validate());
 			selectElement.addEventListener('change', () => {
-				this.setDirty();
 				this.clearCustomError();
-				this.validate();
+				this.setDirty()
 			});
-			selectElement.addEventListener('invalid', () => this.showErrorMessage(selectElement));
-			this.fieldElements.push(selectElement);
+			selectElement.addEventListener('invalid', () => this.errorPlaceholder.reportValidationError());
+			this.fieldElements = [selectElement];
 		}
 
 		// <div role="group"> can contain at most one <textarea> element
 		const allowedTextAreas = (t: Element) => t instanceof HTMLTextAreaElement && t.name && t.form === form.element;
 		const textAreaElement = Array.from(element.getElementsByTagName('TEXTAREA')).filter(allowedTextAreas).at(0);
 		if (textAreaElement instanceof HTMLTextAreaElement) {
-			textAreaElement.addEventListener('focus', () => this.touch());
+			textAreaElement.addEventListener('focus', () => {
+				this.touch();
+				this.clearCustomError();
+			});
 			textAreaElement.addEventListener('input', () => this.inputted());
 			textAreaElement.addEventListener('blur', () => this.validate());
-			textAreaElement.addEventListener('invalid', () => this.showErrorMessage(textAreaElement));
-			this.fieldElements.push(textAreaElement);
+			textAreaElement.addEventListener('invalid', () => this.errorPlaceholder.reportValidationError());
+			this.fieldElements = [textAreaElement];
 		}
 		if (textAreaElement && 'isInitialized' in textAreaElement) {
 			// currently only the `<textarea is="django-richtext">` is initialized asynchronously
@@ -131,14 +133,11 @@ class FieldGroup {
 			resolveInitialized!(true);
 		}
 
+		this.errorPlaceholder = new FieldErrorPlaceholder(this.fieldElements[0]);
 		this.name = this.assertUniqueName();
 		this.initialDisabled = this.fieldElements.map(element => element.disabled);
 		this.initialRequired = this.fieldElements.map(element => element.required);
-		if (requiredAny) {
-			this.validateCheckboxSelectMultiple();
-		} else {
-			this.validateBoundField();
-		}
+		requiredAny ? this.validateCheckboxSelectMultiple() : this.validateBoundField();
 		this.pristineValue = new BoundValue(this.aggregateValue());
 		this.updateVisibility = this.evalVisibility('df-show', true) ?? this.evalVisibility('df-hide', false) ?? function() {};
 		this.updateDisabled = this.evalDisable();
@@ -209,11 +208,9 @@ class FieldGroup {
 			if (element.type === 'checkbox') {
 				(element as HTMLInputElement).checked = value === element.value;
 			} else if (element.type === 'select-multiple') {
-				const select = element as HTMLSelectElement;
-				const selectedOptions = Array.from(select.options).filter(o => (value as Array<string>).includes(o.value));
-				for (const option of selectedOptions) {
-					option.selected = true;
-				}
+				const newValues: Array<FieldValue> = Array.from((element as HTMLSelectElement).selectedOptions).map(o => o.value);
+				newValues.push(value);
+				element.value = newValues as any;
 			} else if (element.type !== 'file') {
 				element.value = value as string;
 			}
@@ -245,6 +242,10 @@ class FieldGroup {
 
 	public restoreRequiredConstraint() {
 		this.fieldElements.forEach((fieldElement, index) => fieldElement.required = this.initialRequired[index]);
+	}
+
+	public get isValid(): boolean {
+		return this.fieldElements[0].validity.valid;
 	}
 
 	private assertUniqueName() : string {
@@ -353,20 +354,14 @@ class FieldGroup {
 
 	private clearCustomError() {
 		this.form.clearCustomErrors();
-		if (this.errorPlaceholder) {
-			this.errorPlaceholder.innerHTML = '';
-		}
-		for (const element of this.fieldElements) {
-			if (element.validity.customError)
-				element.setCustomValidity('');
-		}
+		this.errorPlaceholder.clearError();
 	}
 
 	public resetToInitial() {
 		this.fileUploader?.resetToInitial();
 		this.untouch();
 		this.setPristine();
-		this.clearCustomError();
+		this.errorPlaceholder.clearError();
 	}
 
 	public disableAllFields() {
@@ -385,9 +380,6 @@ class FieldGroup {
 	public untouch() {
 		this.element.classList.remove('dj-submitted', 'dj-touched');
 		this.element.classList.add('dj-untouched');
-		if (this.errorPlaceholder) {
-			this.errorPlaceholder.innerHTML = '';
-		}
 	}
 
 	private setDirty() {
@@ -412,17 +404,6 @@ class FieldGroup {
 		this.element.classList.add('dj-submitted');
 	}
 
-	private showErrorMessage(element: HTMLInputElement|HTMLSelectElement|HTMLTextAreaElement) {
-		const submitted = this.element.classList.contains('dj-submitted');
-		if (!(this.isTouched || submitted) || !this.form.formset.showFeedbackMessages || !this.errorPlaceholder)
-			return;
-		for (const [key, message] of this.errorMessages) {
-			if (element.validity[key as keyof ValidityState]) {
-				this.errorPlaceholder.innerHTML = message;
-			}
-		}
-	}
-
 	public validate() {
 		let element: FieldElement|null = null;
 		for (element of this.fieldElements) {
@@ -438,7 +419,7 @@ class FieldGroup {
 
 		if (!element.validity.valid) {
 			if (element instanceof HTMLInputElement && element.type === 'file') {
-				this.validateFileInput(element, this.form.formset.showFeedbackMessages);
+				this.validateFileInput();
 			}
 		}
 		if (this.form.validate() && !element.validity.valid) {
@@ -447,86 +428,62 @@ class FieldGroup {
 		}
 	}
 
-	private validateCheckboxSelectMultiple() {
-		let validity = false;
-		for (const inputElement of this.fieldElements) {
-			if (inputElement.type !== 'checkbox')
-				throw new Error("Expected input element of type 'checkbox'.");
-			if ((inputElement as HTMLInputElement).checked) {
-				validity = true;
-			} else {
-				inputElement.setCustomValidity(this.errorMessages.get('customError') ?? '');
+	private validateCheckboxSelectMultiple(): boolean {
+		// CheckboxSelectMultiple can be set to be required, which means that at least one checkbox
+		// must be checked, just as a normal SelectMultiple field would behave.
+		// If `<meta name="error-messages" custom_error="…" >` is set, we assume that at least one
+		// checkbox of this field group is required.
+		const message = this.errorPlaceholder.getMessage('customError');
+		if (message && this.fieldElements.every(
+			inputElement => {
+				if (!(inputElement instanceof HTMLInputElement && inputElement.type === 'checkbox'))
+					throw new Error("Expected input element of type 'checkbox'.");
+				return !inputElement.checked;
 			}
-		}
-		if (validity) {
-			for (const inputElement of this.fieldElements) {
-				inputElement.setCustomValidity('');
-			}
-		} else if (this.pristineValue !== undefined && this.errorPlaceholder && this.form.formset.showFeedbackMessages) {
-			this.errorPlaceholder.innerHTML = this.errorMessages.get('customError') ?? '';
-		}
-		this.form.validate();
-		return validity;
-	}
-
-	private validateFileInput(inputElement: HTMLInputElement, showFeedbackMessages: boolean): boolean {
-		if (this.fileUploader!.inProgress()) {
-			// seems that file upload is still in progress => field shall not be valid
-			if (this.errorPlaceholder && showFeedbackMessages) {
-				this.errorPlaceholder.innerHTML = this.errorMessages.get('typeMismatch') ?? '';
-			}
+		)) {
+			this.errorPlaceholder.reportCustomError(message);
 			return false;
 		}
 		return true;
 	}
 
+	private validateFileInput(): boolean {
+		if (this.fileUploader!.inProgress()) {
+			// seems that file upload is still in progress => field shall not be valid
+			this.errorPlaceholder.reportCustomError(gettext("File upload in progress."));
+			return false;
+		}
+		return this.fileUploader!.inputElement.validity.valid;
+	}
+
 	private validateBoundField() {
 		// By default, HTML input fields do not validate their bound value regarding their min-
 		// and max-length. Therefore, this validation must be performed separately.
-		if (this.fieldElements.length !== 1 || !(this.fieldElements[0] instanceof HTMLInputElement))
+		if (this.fieldElements.length !== 1)
 			return;
 		const inputElement = this.fieldElements[0];
 		if (!inputElement.value)
 			return;
-		if (inputElement.type === 'text') {
-			if (inputElement.minLength > 0 && inputElement.value.length < inputElement.minLength)
-				return inputElement.setCustomValidity(this.errorMessages.get('tooShort') ?? '');
-			if (inputElement.maxLength > 0 && inputElement.value.length > inputElement.maxLength)
-				return inputElement.setCustomValidity(this.errorMessages.get('tooLong') ?? '');
+		if (inputElement.type === 'text' || inputElement instanceof HTMLTextAreaElement) {
+			if (inputElement.minLength > 0 && inputElement.value.length < inputElement.minLength) {
+				inputElement.setCustomValidity(gettext("Entered text is too short."));
+			}
+			if (inputElement.maxLength > 0 && inputElement.value.length > inputElement.maxLength) {
+				inputElement.setCustomValidity(gettext("Entered text is too long."));
+			}
 		}
 	}
 
 	public setValidationError(): boolean {
-		let element: FieldElement|null = null;
-		for (element of this.fieldElements) {
-			if (!element.validity.valid)
-				break;
-		}
-		for (const [key, message] of this.errorMessages) {
-			if (element && element.validity[key as ErrorKey]) {
-				if (this.errorPlaceholder) {
-					this.errorPlaceholder.innerHTML = message;
-					element.setCustomValidity(message);
-				}
-				return false;
+		if (this.fieldElements[0] instanceof HTMLInputElement && this.fieldElements[0].type === 'file')
+			return this.validateFileInput();
+
+		for (let element of this.fieldElements) {
+			if (!element.validity.valid) {
+				return this.errorPlaceholder.reportValidationError();
 			}
 		}
-		if (element instanceof HTMLInputElement && element.type === 'file')
-			return this.validateFileInput(element, true);
 		return true;
-	}
-
-	public reportCustomError(message: string) {
-		if (this.errorPlaceholder) {
-			this.errorPlaceholder.innerHTML = message;
-		}
-		this.fieldElements[0].setCustomValidity(message);
-	}
-
-	public reportFailedUpload() {
-		if (this.errorPlaceholder) {
-			this.errorPlaceholder.innerHTML = this.errorMessages.get('badInput') ?? "File upload failed";
-		}
 	}
 }
 
@@ -1211,7 +1168,7 @@ class DjangoForm {
 	public readonly formset: DjangoFormset;
 	public readonly element: HTMLFormElement;
 	public readonly path: Path;
-	public readonly fieldset: DjangoFieldset|null;
+	public readonly fieldsets = Array<DjangoFieldset>(0);
 	private readonly errorList: HTMLUListElement|null = null;
 	private readonly errorPlaceholder: HTMLLIElement|null = null;
 	public readonly fieldGroups = Array<FieldGroup>(0);
@@ -1223,8 +1180,7 @@ class DjangoForm {
 		this.formset = formset;
 		this.element = element;
 		this.path = this.name?.split('.') ?? [];
-		const next = element.nextSibling;
-		this.fieldset = next instanceof HTMLFieldSetElement && next.form === element ? new DjangoFieldset(this, next) : null;
+		this.findFieldsets();
 		const placeholder = element.nextElementSibling?.querySelector(':scope > .dj-form-errors > ul.dj-errorlist > li.dj-placeholder');
 		if (placeholder) {
 			this.errorList = placeholder.parentElement as HTMLUListElement;
@@ -1233,6 +1189,13 @@ class DjangoForm {
 		this.isTransient = this.element.hasAttribute('df-transient');
 		this.element.addEventListener('submit', this.handleSubmit);
 		this.element.addEventListener('reset', this.handleReset);
+	}
+
+	private findFieldsets() {
+		const nextSibling = this.element.nextElementSibling;
+		nextSibling?.querySelectorAll('FIELDSET').forEach(element => {
+			this.fieldsets.push(new DjangoFieldset(this, element as HTMLFieldSetElement));
+		});
 	}
 
 	aggregateValues(): Map<string, FieldValue> {
@@ -1295,7 +1258,7 @@ class DjangoForm {
 	}
 
 	public updateOperability(...args: any[]) {
-		this.fieldset?.updateOperability(...args);
+		this.fieldsets.forEach(fieldset => fieldset.updateOperability(...args));
 		this.fieldGroups.forEach(fieldGroup => fieldGroup.updateOperability(...args));
 	}
 
@@ -1382,7 +1345,7 @@ class DjangoForm {
 		for (const fieldGroup of this.fieldGroups) {
 			const fieldErrors = errors.get(fieldGroup.name);
 			if (Array.isArray(fieldErrors) && fieldErrors.length > 0) {
-				fieldGroup.reportCustomError(fieldErrors[0]);
+				fieldGroup.errorPlaceholder.reportCustomError(fieldErrors[0]);
 			}
 		}
 	}
@@ -1390,11 +1353,7 @@ class DjangoForm {
 	public findFirstErrorReport() : Element|null {
 		if (this.errorList?.textContent)
 			return this.element;  // report a non-field error
-		for (const fieldGroup of this.fieldGroups) {
-			if (fieldGroup.errorPlaceholder?.textContent)
-				return fieldGroup.element;
-		}
-		return null;
+		return this.fieldGroups.find(group => !group.isValid)?.element ?? null;
 	}
 
 	public untouch() {
@@ -1717,8 +1676,10 @@ class DjangoFormCollectionTemplate {
 		this.renderEmptyCollection = template(element.innerHTML);
 		if (element.nextElementSibling?.matches('button.add-collection')) {
 			this.addButton = element.nextElementSibling as HTMLButtonElement;
-			this.addButton.addEventListener('click', this.appendFormCollectionSibling);
+		} else {
+			this.addButton = element.nextElementSibling?.querySelector('button.add-collection') ?? undefined;
 		}
+		this.addButton?.addEventListener('click', this.appendFormCollectionSibling);
 		const innerCollection = this.element.content.querySelector('django-form-collection');
 		const maxSiblings = innerCollection?.getAttribute('max-siblings');
 		if (maxSiblings) {
@@ -1834,14 +1795,13 @@ export class DjangoFormset implements DjangoFormset {
 	private errorPlaceholder: HTMLLIElement|null = null;
 	public readonly collectionErrorsList = new Map<string, HTMLUListElement>();
 	public formCollectionTemplate?: DjangoFormCollectionTemplate;
-	public readonly showFeedbackMessages: boolean;
 	private readonly abortController = new AbortController;
 	private readonly emptyCollectionPrefixes = Array<string>(0);
 	private data?: object;
 
 	constructor(formset: DjangoFormsetElement) {
 		this.element = formset;
-		this.showFeedbackMessages = this.parseWithholdFeedback();
+		this.parseWithholdFeedback();
 		this.CSRFToken = this.element.getAttribute('csrf-token');
 	}
 
@@ -1868,14 +1828,12 @@ export class DjangoFormset implements DjangoFormset {
 		return this.element.hasAttribute('force-submission');
 	}
 
-	private parseWithholdFeedback(): boolean {
-		let showFeedbackMessages = true;
+	private parseWithholdFeedback() {
 		const withholdFeedback = this.element.getAttribute('withhold-feedback')?.split(' ') ?? [];
 		const feedbackClasses = new Set(['dj-feedback-errors', 'dj-feedback-warnings', 'dj-feedback-success']);
 		for (const wf of withholdFeedback) {
 			switch (wf.toLowerCase()) {
 				case 'messages':
-					showFeedbackMessages = false;
 					break;
 				case 'errors':
 					feedbackClasses.delete('dj-feedback-errors');
@@ -1891,7 +1849,6 @@ export class DjangoFormset implements DjangoFormset {
 			}
 		}
 		feedbackClasses.forEach(feedbackClass => this.element.classList.add(feedbackClass));
-		return showFeedbackMessages;
 	}
 
 	public pushTemplatePrefix(prefix: string) {
@@ -1929,7 +1886,8 @@ export class DjangoFormset implements DjangoFormset {
 			} else {
 				const fieldGroupElement = fieldElement.closest('[role="group"]');
 				if (fieldGroupElement && !djangoForm.fieldGroups.find(fg => fg.element === fieldGroupElement)) {
-					djangoForm.fieldGroups.push(new FieldGroup(djangoForm, fieldGroupElement as HTMLElement));
+					const fieldGroup = new FieldGroup(djangoForm, fieldGroupElement as HTMLElement);
+					djangoForm.fieldGroups.push(fieldGroup);
 				}
 			}
 		}
@@ -1957,12 +1915,18 @@ export class DjangoFormset implements DjangoFormset {
 		if (forms.length === 1)
 			return;
 		const formNames = Array<string>();
-		forms.forEach(form => {
-			if (!form.name)
-				throw new Error("Multiple <form>-elements in a <django-formset> require a unique name each.");
-			if (form.name in formNames)
-				throw new Error(`Duplicate name "${form.name}" used in multiple forms of same <django-formset>.`);
-			formNames.push(form.name);
+		forms.forEach((form, counter) => {
+			if (counter === 0) {
+				if (form.name) {
+					formNames.push(form.name);
+				}
+			} else {
+				if (!form.name)
+					throw new Error("Multiple <form>-elements in a <django-formset> require a unique name each.");
+				if (form.name in formNames)
+					throw new Error(`Duplicate name "${form.name}" used in multiple forms of same <django-formset>.`);
+				formNames.push(form.name);
+			}
 		});
 	}
 
@@ -2089,7 +2053,7 @@ export class DjangoFormset implements DjangoFormset {
 		}
 
 		// Build a nested data structure (body) reflecting the shape of collections and forms
-		const body = {};
+		const body = {formset_data: Array.isArray((this.data as any)['formset_data']) ? [] : {}};
 
 		// 1. extend body with empty arrays from Form Collections with siblings
 		for (const prefix of this.emptyCollectionPrefixes) {
@@ -2099,20 +2063,21 @@ export class DjangoFormset implements DjangoFormset {
 		}
 
 		// 2. iterate over all forms and fill the data structure with content
-		for (const form of this.forms) {
-			if (!form.name) {
-				// it's a single form, which doesn't have a name
-				const formsetData = Object.fromEntries(form.aggregateValues());
-				return Object.assign({}, {'formset_data': formsetData}, {_extra: extraData});
-			}
-			if (form.isTransient)
+		for (const [index, form] of this.forms.entries()) {
+			if (form.isTransient) {
 				continue;
-			const absPath = form.getAbsPath();
-			dataValue = getDataValue(this.data, absPath);
-			if (form.markedForRemoval) {
-				dataValue[MARKED_FOR_REMOVAL] = true;
+			} else if (index === 0 && !form.name) {
+				// a single form, which doesn't have a name
+				const formsetData = Object.fromEntries(form.aggregateValues());
+				Object.assign(body['formset_data'], formsetData);
+			} else {
+				const absPath = form.getAbsPath();
+				dataValue = getDataValue(this.data, absPath);
+				if (form.markedForRemoval) {
+					dataValue[MARKED_FOR_REMOVAL] = true;
+				}
+				extendBody(body, absPath);
 			}
-			extendBody(body, absPath);
 		}
 
 		// 3. extend data structure with extra data, for instance from buttons

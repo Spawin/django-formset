@@ -1,17 +1,16 @@
 from django.db import models
-from formset.fields import SortableManyToManyField
+from formset.formfields import SortableManyToManyField
 
 
 class OpinionModel(models.Model):
     tenant = models.PositiveSmallIntegerField()
-
     label = models.CharField(
         "Opinion",
         max_length=50,
     )
 
     class Meta:
-        unique_together = ['tenant', 'label']
+        constraints = [models.UniqueConstraint(fields=['tenant', 'label'], name='unique_label')]
 
     def __str__(self):
         return self.label
@@ -26,7 +25,6 @@ class PollModel(models.Model):
         through='testapp.WeightedOpinion',
         verbose_name="Weighted Opinions",
     )
-
     created_by = models.CharField(
         editable=False,
         max_length=40,
@@ -39,12 +37,10 @@ class WeightedOpinion(models.Model):
         PollModel,
         on_delete=models.CASCADE,
     )
-
     opinion = models.ForeignKey(
         OpinionModel,
         on_delete=models.CASCADE,
     )
-
     weight = models.BigIntegerField(
         "Weighted Opinion",
         default=0,

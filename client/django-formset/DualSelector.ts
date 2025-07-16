@@ -1,17 +1,19 @@
+import isFinite from 'lodash.isfinite';
 import isString from 'lodash.isstring';
 import template from 'lodash.template';
 import {IncompleteSelect} from './IncompleteSelect';
 import {SortableSelectElement} from './SortableSelect';
 import {StyleHelpers} from './helpers';
+import styles from './DualSelector.scss';
 
 
 export class DualSelector extends IncompleteSelect {
 	private readonly selectorElement: HTMLSelectElement;
-	private readonly containerElement: HTMLElement | null;
-	private readonly searchLeftInput?: HTMLInputElement;
-	private readonly searchRightInput?: HTMLInputElement;
+	private readonly wrapperElement: HTMLElement;
+	private readonly searchLeftInput: HTMLInputElement;
+	private readonly searchRightInput: HTMLInputElement;
 	private readonly selectLeftElement: HTMLSelectElement;
-	private readonly selectRightElement: HTMLSelectElement | SortableSelectElement;
+	private readonly selectRightElement: HTMLSelectElement|SortableSelectElement;
 	private readonly moveAllRightButton: HTMLButtonElement;
 	private readonly moveSelectedRightButton: HTMLButtonElement;
 	private readonly moveAllLeftButton: HTMLButtonElement;
@@ -21,52 +23,73 @@ export class DualSelector extends IncompleteSelect {
 	private historicValues: string[][] = [];
 	private historyCursor: number = 0;
 	private lastRemoteQuery = new URLSearchParams();
-	private readonly renderNoResults: Function;
-	private readonly baseSelector = 'django-formset [role="group"] .dj-dual-selector';
+	private readonly renderNoResults = template(gettext("No results found for '${input}'"));
+	private readonly styleSheet: CSSStyleSheet;
+	private readonly baseSelector = '[is="django-dual-selector"] + .dual-selector-wrapper';
 
 	constructor(selectorElement: HTMLSelectElement, name: string) {
 		super(selectorElement);
-		this.selectorElement = selectorElement;
-		this.containerElement = this.fieldGroup.querySelector('.dj-dual-selector');
+		this.selectorElement = selectorElement;  // this element is used to deliver the values to the form
+		if (!(selectorElement.nextElementSibling instanceof HTMLElement && selectorElement.nextElementSibling.classList.contains('dual-selector-wrapper')))
+			throw new Error(`<select is="${name}"> requires a sibling element with class "dual-selector-wrapper".`);
+		this.wrapperElement = selectorElement.nextElementSibling;
 		selectorElement.setAttribute('multiple', 'multiple');
-		const inputs = this.fieldGroup.querySelectorAll('input[type="text"]');
-		if (inputs.length === 2) {
-			this.searchLeftInput = inputs[0] as HTMLInputElement;
-			this.searchRightInput = inputs[1] as HTMLInputElement;
-			this.searchLeftInput.addEventListener('input', evt => this.leftLookup());
-			this.searchRightInput.addEventListener('input', evt => this.rightLookup());
-		}
-		const selectors = this.fieldGroup.querySelectorAll(`select:not([is="${name}"])`);
-		if (selectors.length >= 1) {
-			this.selectLeftElement = selectors.item(0) as HTMLSelectElement;
-			if (selectors.length === 2) {
-				this.selectRightElement = selectors.item(1) as HTMLSelectElement;
-			} else {
-				const selector = this.fieldGroup.querySelector('django-sortable-select');
-				this.selectRightElement = selector as SortableSelectElement;
-			}
-		} else {
-			throw new Error(`<select is="${name}"> requires two <select>-elements`);
-		}
-		this.moveAllRightButton = this.fieldGroup.querySelector('button.dj-move-all-right') as HTMLButtonElement;
-		this.moveSelectedRightButton = this.fieldGroup.querySelector('button.dj-move-selected-right') as HTMLButtonElement;
-		this.moveSelectedLeftButton = this.fieldGroup.querySelector('button.dj-move-selected-left') as HTMLButtonElement;
-		this.moveAllLeftButton = this.fieldGroup.querySelector('button.dj-move-all-left') as HTMLButtonElement;
-		this.undoButton = this.fieldGroup.querySelector('button.dj-undo-selected') as HTMLButtonElement;
-		this.redoButton = this.fieldGroup.querySelector('button.dj-redo-selected') as HTMLButtonElement;
+
+		const inputs = this.wrapperElement.querySelectorAll('input[type="text"]');
+		if (inputs.length !== 2)
+			throw new Error(`<select is="${name}"> requires two <input type="search">-elements`);
+		this.searchLeftInput = inputs[0] as HTMLInputElement;
+		this.searchRightInput = inputs[1] as HTMLInputElement;
+		this.searchLeftInput.addEventListener('input', evt => this.leftLookup());
+		this.searchRightInput.addEventListener('input', evt => this.rightLookup());
+
+		const selectors = this.wrapperElement.querySelectorAll('select[multiple], django-sortable-select');
+		if (selectors.length !== 2)
+			throw new Error(`<select is="${name}"> requires two <select multiple>-elements`);
+		this.selectLeftElement = selectors[0] as HTMLSelectElement;
+		this.selectRightElement = selectors[1] as HTMLSelectElement|SortableSelectElement;
+
+		this.moveAllRightButton = this.fieldGroup.querySelector('button[aria-label="move all right"]') as HTMLButtonElement;
+		this.moveSelectedRightButton = this.fieldGroup.querySelector('button[aria-label="move selected right"]') as HTMLButtonElement;
+		this.moveSelectedLeftButton = this.fieldGroup.querySelector('button[aria-label="move selected left"]') as HTMLButtonElement;
+		this.moveAllLeftButton = this.fieldGroup.querySelector('button[aria-label="move all left"]') as HTMLButtonElement;
+		this.undoButton = this.fieldGroup.querySelector('button[aria-label="undo assignment"]') as HTMLButtonElement;
+		this.redoButton = this.fieldGroup.querySelector('button[aria-label="redo assignment"]') as HTMLButtonElement;
+		this.styleSheet = StyleHelpers.stylesAreInstalled(this.baseSelector) ?? this.transferStyles();
+		this.selectorElement.className = '';
 		this.selectorElement.classList.add('dj-concealed');
-		const templ = selectorElement.parentElement?.querySelector('template.select-no-results');
-		this.renderNoResults = (data: any) => templ ? template(templ.innerHTML)(data) : "No results";
-		if (!StyleHelpers.stylesAreInstalled(this.baseSelector)) {
-			this.transferStyles();
-		}
 	}
 
 	private installEventHandlers() {
-		this.selectLeftElement.addEventListener('focus', this.touch);
+		this.selectorElement.addEventListener('focus', () => this.selectLeftElement.focus());
+		this.selectLeftElement.addEventListener('focus', () => {
+			this.wrapperElement.classList.add('focus');
+			if (this.selectRightElement instanceof SortableSelectElement) {
+				this.selectRightElement.blur();
+			}
+			this.selectorElement.dispatchEvent(new Event('focusin'));
+		});
+		this.selectLeftElement.addEventListener('blur', () => {
+			if (this.selectRightElement !== document.activeElement) {
+				this.selectorElement.dispatchEvent(new Event('focusout'));
+				this.wrapperElement.classList.remove('focus');
+			}
+		});
 		this.selectLeftElement.addEventListener('dblclick', evt => this.moveOptionRight(evt.target));
 		this.selectLeftElement.addEventListener('scroll', evt => this.selectLeftScrolled());
-		this.selectRightElement.addEventListener('focus', this.touch);
+		this.selectRightElement.addEventListener('focus', () => {
+			this.wrapperElement.classList.add('focus');
+			if (this.selectRightElement instanceof SortableSelectElement) {
+				this.selectLeftElement.blur();
+			}
+			this.selectorElement.dispatchEvent(new Event('focusin'));
+		});
+		this.selectRightElement.addEventListener('blur', () => {
+			if (this.selectLeftElement !== document.activeElement) {
+				this.selectorElement.dispatchEvent(new Event('focusout'));
+				this.wrapperElement.classList.remove('focus');
+			}
+		});
 		this.selectRightElement.addEventListener('dblclick', evt => this.moveOptionLeft(evt.target));
 		this.selectRightElement.addEventListener('options-sorted', evt => this.optionsSorted());
 		this.moveAllRightButton?.addEventListener('click', evt => this.moveAllOptionsRight());
@@ -77,7 +100,7 @@ export class DualSelector extends IncompleteSelect {
 		this.redoButton?.addEventListener('click', evt => this.unOrRedo(+1));
 	}
 
-	public initialize() {
+	public async initialize() {
 		const initialValues: string[] = [];
 		const optionElements = this.selectorElement.querySelectorAll(':scope > option') as NodeListOf<HTMLOptionElement>;
 		optionElements.forEach(option => {
@@ -111,6 +134,9 @@ export class DualSelector extends IncompleteSelect {
 		}
 		this.setButtonsState();
 		this.setupFilters(this.selectorElement);
+		if (this.mustReloadOptions()) {
+			await this.reloadOptions();
+		}
 		this.installEventHandlers();
 	}
 
@@ -145,7 +171,7 @@ export class DualSelector extends IncompleteSelect {
 		if (!this.isIncomplete)
 			return;
 		const selectLeftScroll = this.selectLeftElement.scrollHeight - this.selectLeftElement.scrollTop;
-		if (selectLeftScroll <= this.selectLeftElement.offsetHeight) {
+		if (selectLeftScroll <= this.selectLeftElement.offsetHeight + 20) {
 			// triggers whenever the last <option>-element becomes visible inside its parent <select>
 			await this.remoteLookup();
 		}
@@ -177,7 +203,6 @@ export class DualSelector extends IncompleteSelect {
 			option.selected = !!this.selectRightElement.querySelector(`option[value="${option.value}"]`);
 		});
 		this.setButtonsState();
-		this.containerElement?.classList.toggle('invalid', !this.selectorElement.checkValidity());
 	}
 
 	private setButtonsState() {
@@ -388,67 +413,75 @@ export class DualSelector extends IncompleteSelect {
 
 	private transferStyles() {
 		const declaredStyles = document.createElement('style');
+		declaredStyles.innerText = styles;
 		document.head.appendChild(declaredStyles);
 		if (!declaredStyles.sheet)
 			throw new Error("Could not create <style> element");
 		const sheet = declaredStyles.sheet;
-
-		// set dummy style to check if styles have been loaded for this widget
-		sheet.insertRule(`${this.baseSelector}{--dummy-style: none;}`, 0);
-
-		// extract focused styles from the <select>-elements
-		let index = 0;
-		this.selectLeftElement.style.transition = this.selectRightElement.style.transition = 'none';
-		this.selectLeftElement.classList.add('-focus-');
-		let extraStyles = StyleHelpers.extractStyles(this.selectLeftElement, ['box-shadow']);
-		sheet.insertRule(`${this.baseSelector} .left-column:has(>input:focus, >select:focus){${extraStyles}}`, ++index);
-		sheet.insertRule(`${this.baseSelector} .left-column>:is(input:focus, select:focus){box-shadow: none; outline: none;}`, ++index);
-		extraStyles = StyleHelpers.extractStyles(this.selectLeftElement, ['border-color', 'outline']);
-		sheet.insertRule(`${this.baseSelector} .left-column:has(>input:focus)>select{${extraStyles}}`, ++index);
-		sheet.insertRule(`${this.baseSelector} .left-column:has(>select:focus)>input{${extraStyles}}`, ++index);
-		this.selectLeftElement.classList.remove('-focus-');
-		if (this.searchLeftInput) {
-			extraStyles = StyleHelpers.extractStyles(this.searchLeftInput, ['border-top-left-radius', 'border-top-right-radius']);
-			sheet.insertRule(`${this.baseSelector} .left-column{${extraStyles}}`, ++index);
+		this.selectorElement.style.transition = 'none';  // prevent transition while pilfering styles
+		let loaded = false;
+		for (let index = 0; sheet && index < sheet.cssRules.length; index++) {
+			const cssRule = sheet.cssRules.item(index) as CSSStyleRule;
+			const selector = cssRule.selectorText.trim();
+			let extraStyles = '';
+			switch (selector) {
+				case this.baseSelector:
+					extraStyles = StyleHelpers.extractStyles(this.selectorElement, {
+						'--border-style': 'border-style',
+						'--border-width': 'border-width',
+					});
+					loaded = true;
+					break;
+				case `${this.baseSelector} :is(select, django-sortable-select)`:
+					extraStyles = StyleHelpers.extractStyles(this.selectLeftElement, ['height']);
+					break;
+				case `${this.baseSelector} .left-column`:
+					extraStyles = [
+						StyleHelpers.extractStyles(this.searchLeftInput, ['border-top-left-radius', 'border-top-right-radius']),
+						StyleHelpers.extractStyles(this.selectLeftElement, ['border-bottom-left-radius', 'border-bottom-right-radius']),
+					].join('');
+					break;
+				case `${this.baseSelector} .left-column:has(input:focus, select:focus)`:
+				case `${this.baseSelector} .right-column:has(input:focus, select:focus, django-sortable-select.focus)`:
+					this.selectorElement.classList.add('⁝focus');
+					extraStyles = StyleHelpers.extractStyles(this.selectorElement, ['box-shadow', 'border-color', 'outline']);
+					this.selectorElement.classList.remove('⁝focus');
+					break;
+				case `${this.baseSelector} .right-column`:
+					extraStyles = [
+						StyleHelpers.extractStyles(this.searchRightInput, ['border-top-left-radius', 'border-top-right-radius']),
+						StyleHelpers.extractStyles(this.selectRightElement, ['border-bottom-left-radius', 'border-bottom-right-radius']),
+					].join('');
+					break;
+				default:
+					break;
+			}
+			if (extraStyles) {
+				sheet.insertRule(`${selector}{${extraStyles}}`, ++index);
+			}
 		}
-		extraStyles = StyleHelpers.extractStyles(this.selectLeftElement, ['border-bottom-left-radius', 'border-bottom-right-radius']);
-		sheet.insertRule(`${this.baseSelector} .left-column{${extraStyles}}`, ++index);
-		this.selectRightElement.classList.add('-focus-');
-		extraStyles = StyleHelpers.extractStyles(this.selectRightElement, ['box-shadow']);
-		sheet.insertRule(`${this.baseSelector} .right-column:has(> input:focus, >select:focus, >django-sortable-select.focus){${extraStyles}}`, ++index);
-		sheet.insertRule(`${this.baseSelector} .right-column>:is(input:focus, select:focus, django-sortable-select.focus){box-shadow: none; outline: none;}`, ++index);
-		extraStyles = StyleHelpers.extractStyles(this.selectRightElement, ['border-color', 'outline']);
-		sheet.insertRule(`${this.baseSelector} .right-column:has(>input:focus)>:is(select, django-sortable-select){${extraStyles}}`, ++index);
-		sheet.insertRule(`${this.baseSelector} .right-column:has(>select:focus, django-sortable-select.focus)>input{${extraStyles}}`, ++index);
-		this.selectRightElement.classList.remove('-focus-');
-		if (this.searchRightInput) {
-			extraStyles = StyleHelpers.extractStyles(this.searchRightInput, ['border-top-left-radius', 'border-top-right-radius']);
-			sheet.insertRule(`${this.baseSelector} .right-column{${extraStyles}}`, ++index);
-		}
-		extraStyles = StyleHelpers.extractStyles(this.selectRightElement, ['border-bottom-left-radius', 'border-bottom-right-radius']);
-		sheet.insertRule(`${this.baseSelector} .right-column{${extraStyles}}`, ++index);
-		this.selectLeftElement.style.transition = this.selectRightElement.style.transition = '';
-
-		// set background-color to transparent, so that the shadow on a focused input/select field is not cropped
-		extraStyles = StyleHelpers.extractStyles(this.selectLeftElement, ['background-color']);
-		sheet.insertRule(`${this.baseSelector} .left-column{${extraStyles}}`, ++index);
-		extraStyles = StyleHelpers.extractStyles(this.selectRightElement, ['background-color']);
-		sheet.insertRule(`${this.baseSelector} .right-column{${extraStyles}}`, ++index);
-		sheet.insertRule(`${this.baseSelector} :has(select, input){background-color: transparent;}`, ++index);
-
-		// prevent <select multiple> to have different heights depending on having at least one <option>
-		extraStyles = StyleHelpers.extractStyles(this.selectLeftElement, ['height']);
-		sheet.insertRule(`${this.baseSelector} select{${extraStyles}}`, ++index);
+		this.selectLeftElement.style.transition = '';
+		StyleHelpers.pushMediaQueryStyles(
+			sheet,
+			this.baseSelector,
+			{
+				'--border-color': 'border-color',
+				'--outline': 'outline',
+			},
+			this.selectorElement,
+			this.selectorElement.className,
+		);
+		if (!loaded)
+			throw new Error(`Could not load styles for ${this.baseSelector}`);
+		return sheet;
 	}
-
-	protected getValue = () => this.historicValues[this.historicValues.length - 1];
 
 	protected async formResetted(event: Event) {
 		this.historicValues.splice(1);
 		this.setHistoryCursor(0);
 		await this.reloadOptions();
 		this.selectorChanged();
-		this.containerElement?.classList.remove('invalid');
+		this.wrapperElement.classList.remove('invalid');
 		const errorPlaceholder = this.fieldGroup.querySelector('.dj-errorlist > .dj-placeholder');
 		if (errorPlaceholder) {
 			errorPlaceholder.innerHTML = '';
@@ -469,7 +502,7 @@ export class DualSelector extends IncompleteSelect {
 		this.clearSearchFields();
 		this.fieldGroup.classList.remove('dj-dirty', 'dj-touched', 'dj-validated');
 		this.fieldGroup.classList.add('dj-untouched', 'dj-pristine');
-		this.containerElement?.classList.remove('invalid');
+		this.wrapperElement.classList.remove('invalid');
 		const errorPlaceholder = this.fieldGroup.querySelector('.dj-errorlist > .dj-placeholder');
 		if (errorPlaceholder) {
 			errorPlaceholder.innerHTML = '';
@@ -488,6 +521,32 @@ export class DualSelector extends IncompleteSelect {
 			this.selectorChanged();
 		}
 	}
+
+	public getValue = () => this.historicValues[this.historicValues.length - 1];
+
+	public setValues(values: FieldValue[]) {
+		const emitChangeEvent = () => this.selectorElement.dispatchEvent(new Event('focusout'));
+		const stringValues = values.filter(v => isString(v));
+		if (values.length !== stringValues.length) {
+			const finiteValues = values.filter(v => isFinite(v)).map(v => v.toString());
+			this.loadOptions(this.buildFetchQuery(0, {pk: finiteValues.join(',')}), (options: Array<OptionData>) => {
+				options.forEach(option => {
+					const optionElement = this.selectorElement.querySelector(`option[value="${option.id}"]`);
+					if (optionElement) {
+						this.moveOptionToSelectElement(optionElement as HTMLOptionElement, this.selectRightElement);
+					} else {
+						const optionElement = this.addOptionToSelectElement(option, this.selectRightElement).cloneNode(false) as HTMLOptionElement;
+						this.selectorElement.add(optionElement);
+					}
+					this.selectorChanged();
+				});
+			}).then(() => {
+				emitChangeEvent();
+			});
+		} else {
+			emitChangeEvent();
+		}
+	}
 }
 
 const DS = Symbol('DualSelectorElement');
@@ -502,6 +561,18 @@ export class DualSelectorElement extends HTMLSelectElement {
 
 	connectedCallback() {
 		this[DS].initialize();
+	}
+
+	get value(): any {
+		return this[DS].getValue().join(',');
+	}
+
+	set value(val: any) {
+		if (isString(val)) {
+			this[DS].setValues(val.split(','));
+		} else if (Array.isArray(val)) {
+			this[DS].setValues(val);
+		}
 	}
 }
 

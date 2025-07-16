@@ -1,17 +1,72 @@
 ## Changes
 
-1.7.7
+- 2.0.1
+  * Fix regression introduced in 2.0: Attribute `filter_by` in widgets `Selectize`,
+    `SelectizeMultiple` and `DualSelector` did not trigger a reload if observer field changed.
+  * Prevent double loading of options in widgets `Selectize`, `SelectizeMultiple` and
+    `DualSelector`.
+
+- 2.0
+  * **Main feature of this release:** It now is possible to use a **django-formset** aware
+    `ModelForm` or `FormCollection` inside the Django-Admin.
+    Read the [documentation](https://django-formset.fly.dev/admin-integration/) on how to use this
+    feature.
+  * A **django-formset** aware `ModelForm` can use the attribute `fields_map` in its `Meta` class.
+    This allows to map fields from a `Fieldset` to any arbitrary model field. It also allows to
+    map multiple form fields into a `JSONField` offered by the model. 
+  * A **django-formset** aware `ModelForm` can use the new `CollectionField` in combination with the
+    just mentioned `fields_map`. This allows to store the complete content of a form collection
+    inside JSON.
+  * **Breaking Change:** The `Fieldset` class is a standalone entity to group multiple input fields
+    into a ``<fieldset>``-element. It is not a subclass of Django's `Form` class anymore. Read the
+    [documentation](https://django-formset.fly.dev/fieldsets/) on how to use it.
+  * **Breaking Change:** The `FormMixin` class has been moved from `formset.utils` to
+    `formset.forms`. There are two new classes `formset.forms.Form` and `formset.forms.ModelForm`
+    which shall be used as base classes for forms and model forms.
+  * **Breaking Change:** The form field class `formset.richtext.fields.RichTextField` has been
+    moved from `formset.richtext.fields` to `formset.formfields.richtext`. The model field class
+    `formset.richtext.fields.RichTextField` has been moved from `formset.richtext.models.fields` to
+    `formset.modelfields`. The widget class `formset.richtext.widgets.RichTextArea` has been moved
+    from `formset.richtext.widgets` to `formset.widgets`. This change was made to create a
+    consistent naming convention across all widgets, form- and model fields.
+  * **Breaking Change:** The classes `DateRangeField` and `DateTimeRangeField` have been moved from
+    `formset.ranges` to `formset.formfields`.
+    The classes `DateRangeCalendar`, `DateRangeTextbox`, `DateRangePicker`, `DateTimeRangeCalendar`,
+    `DateTimeRangeTextbox` and `DateTimeRangePicker` have been moved from `formset.ranges` to
+    `formset.widgets`.
+  * **Drop support for Django-4.2**.
+  * Semantically improve HTML: The `<div class="dj-form">`-element to wrap forms now is rendered as 
+    `<div role="form">`. 
+  * The `Selectize` widget now uses a search box inside the dropdown instead of a search box inside
+    the selection area.
+  * The `Selectize` widget now scrolls infinite, i.e., it loads the remaining options from the
+    server when scolling to the end of the listbox.
+  * Error messages shown for invalid fields hide as soon as the field is focused. This is to
+    prevent the user from being unsettled by an error message while filling out the form.
+  * In input fields, show the success tick for validated fields after blurring and not while typing,
+    for the same reason as above.
+  * After submitting a form containing the field `RichTextField`, the uploaded image is copied
+    from the temporary upload folder into its final destination.
+  * Add management command `./manage.py cleanup_files` to delete dangling files. This is because the
+    `UploadedFileInput` widget accepts files before their form is submitted and hence processed.
+  * Fix: Border of Richtext Area and Selectize widgets now has the same (green) feedback border as
+    other input fields on blur after entering a valid value.
+  * Fix: Calendar widget inside a form collection was not rendered properly.
+  * Fix: Selectize widget had alignment problems with its lookup field. 
+  * Fix: Placement of dialog for phone number and date picker now also considers left offset.
+
+- 1.7.7
   * Add support for Django-5.2.
 
-1.7.6
+- 1.7.6
   * Fix #209: Induce button now also work for fresh form collections.
 
-1.7.5
+- 1.7.5
   * Fix #208: Closed form dialogs are always considered as valid.
   * Fix in web component ``date-picker`` and ``date-time-picker``: On submission the timezone offset
     now is removed, this sometimes caused the submission of incorrect date/time stamps.
 
-1.7.4
+- 1.7.4
   * Fix #80: Allow to use `django_filters.FilterSet` on filtered widgets.
 
 - 1.7.3

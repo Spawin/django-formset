@@ -1,10 +1,18 @@
 import copy
 from pathlib import Path
 
+from django.apps import apps
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.core.files.uploadedfile import UploadedFile
+from django.core.serializers.json import DjangoJSONEncoder
+from django.db.models import Model, ObjectDoesNotExist, QuerySet
+from django.db.models.fields.files import FieldFile, FileField as FileModelField
+from django.db.models.utils import AltersData
+from django.forms.fields import FileField as FileFormField
+from django.forms.forms import BaseForm
+from django.forms.models import BaseModelForm, ModelChoiceField, ModelMultipleChoiceField
 from django.forms.utils import ErrorDict, ErrorList, RenderableMixin
-from django.utils.functional import cached_property
 from django.utils.safestring import mark_safe
 
 from formset.renderers.default import FormRenderer
@@ -33,7 +41,34 @@ class FormsetErrorList(ErrorList):
         }
 
     def __repr__(self):
-        return f'<{self.__class__.__name__}: {[item for item in self]} {self.client_messages}>'
+        client_messages = getattr(self, 'client_messages', '')
+        return f'<{self.__class__.__name__}: {[item for item in self]} {client_messages}>'
+
+
+def prepare_initial(instance, field_name, field, value):
+    """
+    Prepare initial data from a serialized representation to be usable for fields requiring an object.
+    This function converts entities into a `FieldFile`, `ModelChoiceField`, `ModelMultipleChoiceField` object
+    or leaves the value as is.
+    """
+    if isinstance(field, ModelMultipleChoiceField):
+        try:
+            Model = apps.get_model(value['model'])
+            return Model.objects.filter(
+                pk__in=value['p_keys']
+            )
+        except (KeyError, TypeError):
+            return
+    elif isinstance(field, ModelChoiceField):
+        try:
+            Model = apps.get_model(value['model'])
+            return Model.objects.get(pk=value['pk'])
+        except (KeyError, ObjectDoesNotExist, TypeError):
+            pass
+    elif isinstance(field, FileFormField):
+        return FieldFile(instance, FileModelField(name=field_name), value)
+    else:
+        return field.to_python(value)
 
 
 class HolderMixin:
@@ -46,6 +81,7 @@ class HolderMixin:
 
     def replicate(self, data=None, initial=None, auto_id=None, prefix=None, instance=None, partial=None, renderer=None,
                   ignore_marked_for_removal=None):
+
         replica = copy.copy(self)
         if hasattr(self, 'declared_holders'):
             replica.declared_holders = {
@@ -54,6 +90,7 @@ class HolderMixin:
                     ignore_marked_for_removal=ignore_marked_for_removal,
                 ) for key, holder in self.declared_holders.items()
             }
+
         replica.data = data
         replica.is_bound = data is not None
         replica._errors = None
@@ -117,64 +154,23 @@ class HolderMixin:
         return super().is_valid()
 
 
-class FormDecoratorMixin:
-    def __init__(self, error_class=FormsetErrorList, **kwargs):
-        kwargs['error_class'] = error_class
-        super().__init__(**kwargs)
-
-    def __getitem__(self, name):
-        "Returns a modified BoundField for the given field."
-        from formset.boundfield import BoundField
-
-        try:
-            field = self.fields[name]
-        except KeyError:
-            raise KeyError(f"Key {name} not found in Form")
-        return BoundField(self, field, name)
-
-    @cached_property
-    def form_id(self):
-        # The "form" tag is used to link fields to their form owner
-        # See https://developer.mozilla.org/en-US/docs/Web/HTML/Element/input#attr-form for details
-        auto_id = self.auto_id if '%s' in str(self.auto_id) else 'id_%s'
-        if self.prefix:
-            return auto_id % self.prefix
-        else:
-            return auto_id % self.__class__.__name__.lower()
-
-
-class FormMixin(FormDecoratorMixin, HolderMixin):
-    """
-    Mixin class to be added to a native Django Form. This is required to overwrite
-    some form methods provided by Django
-    """
-
-    def add_prefix(self, field_name):
-        """
-        Return the field name with a prefix preended, if this Form has a prefix set.
-        """
-        return f'{self.prefix}.{field_name}' if self.prefix else field_name
-
-    def get_context(self):
-        """
-        This simplified method just returns the ``form``, but not the ``fields``, ``hidden_fields``
-        and ``errors``, since they are rendered by the included ``form.html`` template.
-        """
-        return {
-            'form': self,
-        }
-
-    def get_field(self, field_name):
-        return self.fields[field_name]
-
-
 class FileFieldMixin:
-    def clean(self, value, initial=None):
-        if isinstance(value, Path) and initial is not None:
-            initial = copy.copy(initial)
-            initial.name = str(value)
-            return initial
-        return super().clean(value, initial)
+    """
+    Mixin class added by BoundField to fields inheriting from `django.forms.fields.FileField`.
+    """
+
+    def _clean_bound_field(self, bf):
+        value = bf.initial if self.disabled else bf.data
+        instance = AltersData()  # collectionField has no instance, so create a dummy
+        if isinstance(value, Path):
+            if bf.initial:
+                initial = copy.copy(bf.initial)
+                initial.name = str(value)
+                return initial
+            return FieldFile(instance, FileModelField(name=bf.name), str(value))
+        elif value is None:
+            return FieldFile(instance, FileModelField(name=bf.name), None)
+        return self.clean(value, bf.initial)
 
 
 class RenderableDetachedFieldMixin(RenderableMixin):
@@ -225,3 +221,80 @@ class RenderableDetachedFieldMixin(RenderableMixin):
 
     __str__ = render
     __html__ = render
+
+
+class CollectionFieldMixin:
+    """
+    Mixin class to be added to CollectionField if it used as a field holding a FormCollection.
+    """
+    collection = None
+    encoder = DjangoJSONEncoder()
+
+    @classmethod
+    def pre_serialize(cls, instance, field_name, value):
+        """
+        Pre-serialize cleaned data recursively to be usable for a JSONField.
+        This function
+        - stores all entities of `UploadedFile` to disk and returns their file name.
+        - converts all `FieldFile` objects to their file name.
+        - converts all `Model` and `QuerySet` objects to a serializable representation.
+        """
+        if isinstance(value, list):
+            return [cls.pre_serialize(instance, field_name, val) for val in value]
+        if isinstance(value, dict):
+            return {key: cls.pre_serialize(instance, field_name, val) for key, val in value.items()}
+        if isinstance(value, UploadedFile):
+            file_model_field = FileModelField(name=field_name)
+            file_model_field.attname = field_name
+            field_file = FieldFile(instance, file_model_field, value.name)
+            field_file.save(field_file.name, value, save=False)
+            return field_file.name
+        if isinstance(value, FieldFile):
+            return value.name
+        if isinstance(value, Model):
+            opts = value._meta
+            return {
+                'model': '{}.{}'.format(opts.app_label, opts.model_name),
+                'pk': value.pk,
+            }
+        if isinstance(value, QuerySet):
+            opts = value.model._meta
+            return {
+                'model': '{}.{}'.format(opts.app_label, opts.model_name),
+                'p_keys': list(
+                    value.values_list('pk', flat=True)
+                ),
+            }
+        try:
+            return cls.encoder.default(value)
+        except TypeError:
+            return value
+
+    @classmethod
+    def traverse_initial(cls, holder, instance, value):
+        if value is None:
+            return
+        if isinstance(value, list):
+            return [cls.traverse_initial(holder, instance, item) for item in value]
+        assert isinstance(value, dict), "Value must be a dict or list."
+        if isinstance(holder, BaseForm):
+            return {
+                name: prepare_initial(instance, name, field, value[name])
+                for name, field in holder.fields.items() if name in value
+            }
+        return {
+            key: cls.traverse_initial(collection, instance, value[key])
+            for key, collection in holder.declared_holders.items() if key in value
+        }
+
+    @classmethod
+    def _check_collection(cls, holder):
+        """
+        Run this after instantiation to check if the collection does not contain any ModelForm class.
+        """
+        if isinstance(holder, BaseForm):
+            if isinstance(holder, BaseModelForm):
+                raise TypeError(f"In {cls} form must be of type Form not {holder.__class__}.")
+        else:
+            for collection in holder.declared_holders.values():
+                cls._check_collection(collection)

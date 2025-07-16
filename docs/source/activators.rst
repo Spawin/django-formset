@@ -11,14 +11,14 @@ sometimes as ``<input type="button" …>``. Okay, the button's value is transien
 to trigger an action, such as submit, reset or a custom event. But it still is an input field with a
 name and a value, so why does Django not provide a field type for it?
 
-This is where **django-formset** comes in. It provides a field type for buttons named "Activator".
+This is where **django-formset** steps in. It provides a field type for buttons named "Activator".
 This name was chosen to distinguish it from the term "Button", which is used for its representation
-in HTML. Such an :class:`formset.fields.Activator` behaves as any other Django Form field and can be
-used to trigger an action – more on that later. The default widget of an ``Activator`` field is, as
-one might expect, the :class:`formset.widgets.Button` widget. An ``Activator`` can be used inside
-any Django ``Form`` or ``FormCollection``. There it behaves very similar to a normal field. The main
-difference is that it does not store any data and hence can't be initialized. Instead, it waits for
-click events which then can be intercepted by other components of the embedding
+in HTML. Such an :class:`formset.formfields.Activator` behaves like any other Django Form field and
+can be used to trigger an action – more on that later. The default widget of an ``Activator`` field
+is, as one might expect, the :class:`formset.widgets.Button` widget. An ``Activator`` can be used
+inside any Django ``Form`` or ``FormCollection``. There it behaves very similar to a normal field.
+The main difference is that it does not store any data and hence can't be initialized. Instead, it
+waits for click events which then can be intercepted by other components of the embedding
 ``<django-formset>``-component.
 
 
@@ -42,7 +42,7 @@ This example shows how to use an ``Activator`` field to submit the form:
 
 	from django.forms.fields import CharField
 	from django.forms.forms import Form
-	from formset.fields import Activator
+	from formset.formfields.activator import Activator
 	from formset.renderers import ButtonVariant
 	from formset.widgets import Button
 

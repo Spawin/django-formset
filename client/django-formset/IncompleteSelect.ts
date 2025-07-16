@@ -3,47 +3,56 @@ import {Widget} from './Widget';
 
 
 export abstract class IncompleteSelect extends Widget {
+	private readonly initialIncomplete: boolean;
 	protected isIncomplete: boolean;
 	protected getValue = () => [] as string|string[];
 	private filterByValues = new Map<string, string | string[]>();
 
 	constructor(element: HTMLSelectElement) {
 		super(element);
-		this.isIncomplete = element.hasAttribute('incomplete');
+		this.initialIncomplete = this.isIncomplete = element.hasAttribute('incomplete');
 	}
 
-	protected async setupFilters(element: HTMLSelectElement) {
+	protected setupFilters(element: HTMLSelectElement) {
 		const filters = element.getAttribute('filter-by')?.split(',') ?? [];
 		filters.forEach(filterBy => {
 			const observedElement = element.form?.elements.namedItem(filterBy);
 			if (observedElement instanceof HTMLInputElement) {
 				this.filterByValues.set(filterBy, observedElement.value);
+				let loading = false;
 				observedElement.addEventListener('change', async (event: Event) => {
-					const changedElement = event.currentTarget;
-					if (changedElement instanceof HTMLInputElement) {
+					const changedElement = event.target;
+					if (!loading && changedElement instanceof HTMLInputElement) {
 						this.filterByValues.set(filterBy, changedElement.value);
+						this.isIncomplete = this.initialIncomplete;
+						loading = true;
 						await this.reloadOptions(true);
+						loading = false;
 					}
 				});
 			} else if (observedElement instanceof HTMLSelectElement) {
 				this.filterByValues.set(filterBy, Array.from(observedElement.selectedOptions).map(o => o.value));
+				let loading = false;
 				observedElement.addEventListener('change', async (event: Event) => {
-					const changedElement = event.currentTarget;
-					if (changedElement instanceof HTMLSelectElement) {
+					if (!loading && event.target === observedElement) {
 						this.filterByValues.set(filterBy, Array.from(observedElement.selectedOptions).map(o => o.value));
+						this.isIncomplete = this.initialIncomplete;
+						loading = true;
 						await this.reloadOptions(true);
+						loading = false;
 					}
 				});
 			}
 		});
-		if (Array.from(this.filterByValues.values()).some(val => (val as Array<string>).some(s => s))) {
-			await this.reloadOptions();
-		}
 	}
 
 	protected abstract formResetted(event: Event) : void;
 
 	protected abstract formSubmitted(event: Event) : void;
+
+	protected mustReloadOptions() : boolean {
+		return Array.from(this.filterByValues.values()).some(val => (val as Array<string>).some(s => s));
+	}
 
 	protected abstract reloadOptions(silent?: boolean) : Promise<void>;
 
